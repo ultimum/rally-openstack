@@ -1,0 +1,167 @@
+{% set qcow2_image = qcow2_image %}
+{% set raw_image = raw_image %}
+
+---
+
+version: 2
+
+title: Ultimum Glance Production Validation
+
+description: >
+  Production-oriented Glance validation covering API access,
+  image upload, download, metadata modification, deletion,
+  QCOW2/RAW handling and interoperable image import.
+
+subtasks:
+
+  - title: List images
+    scenario:
+      GlanceImages.list_images: {}
+
+    runner:
+      constant:
+        times: 10
+        concurrency: 2
+
+    contexts:
+      users:
+        tenants: 2
+        users_per_tenant: 2
+
+    sla:
+      failure_rate:
+        max: 0
+
+
+  - title: QCOW2 create and get
+    scenario:
+      GlanceImages.create_and_get_image:
+        image_location: "{{ qcow2_image }}"
+        disk_format: qcow2
+        container_format: bare
+        visibility: private
+        properties:
+          rally_test: glance-production
+
+    runner:
+      constant:
+        times: 4
+        concurrency: 2
+
+    contexts:
+      users:
+        tenants: 2
+        users_per_tenant: 1
+
+    sla:
+      failure_rate:
+        max: 0
+
+
+  - title: QCOW2 upload and download
+    scenario:
+      GlanceImages.create_and_download_image:
+        image_location: "{{ qcow2_image }}"
+        disk_format: qcow2
+        container_format: bare
+        visibility: private
+        properties:
+          rally_test: glance-download
+
+    runner:
+      constant:
+        times: 4
+        concurrency: 2
+
+    contexts:
+      users:
+        tenants: 2
+        users_per_tenant: 1
+
+    sla:
+      failure_rate:
+        max: 0
+
+
+  - title: RAW create and delete
+    scenario:
+      GlanceImages.create_and_delete_image:
+        image_location: "{{ raw_image }}"
+        disk_format: raw
+        container_format: bare
+        visibility: private
+        properties:
+          rally_test: glance-raw
+
+    runner:
+      constant:
+        times: 2
+        concurrency: 1
+
+    contexts:
+      users:
+        tenants: 1
+        users_per_tenant: 1
+
+    sla:
+      failure_rate:
+        max: 0
+
+
+  - title: Image metadata update
+    scenario:
+      GlanceImages.create_and_update_image:
+        image_location: "{{ qcow2_image }}"
+        disk_format: qcow2
+        container_format: bare
+        visibility: private
+
+        create_min_disk: 0
+        create_min_ram: 0
+
+        create_properties:
+          rally_test: glance-update
+          rally_state: initial
+
+        update_min_disk: 1
+        update_min_ram: 64
+
+    runner:
+      constant:
+        times: 2
+        concurrency: 1
+
+    contexts:
+      users:
+        tenants: 1
+        users_per_tenant: 1
+
+    sla:
+      failure_rate:
+        max: 0
+
+
+  - title: Interoperable image import
+    scenario:
+      GlanceImages.import_and_delete_image:
+        image_location: "{{ qcow2_image }}"
+        disk_format: qcow2
+        container_format: bare
+        visibility: private
+        import_method: glance-direct
+        properties:
+          rally_test: glance-import
+
+    runner:
+      constant:
+        times: 2
+        concurrency: 1
+
+    contexts:
+      users:
+        tenants: 1
+        users_per_tenant: 1
+
+    sla:
+      failure_rate:
+        max: 0

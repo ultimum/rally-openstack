@@ -1,0 +1,261 @@
+#!/usr/bin/env bash
+
+set -o pipefail
+
+DATA_DIR="${RALLY_DATA_DIR:-/data}"
+EXTRA_DIR="${DATA_DIR}/extra"
+TASK_DIR="${RALLY_TASK_DIR:-/opt/rally-openstack/tasks}"
+
+CIRROS_VERSION="${CIRROS_VERSION:-0.6.3}"
+CIRROS_URL="https://download.cirros-cloud.net/${CIRROS_VERSION}/cirros-${CIRROS_VERSION}-x86_64-disk.img"
+
+QCOW2="${EXTRA_DIR}/cirros-${CIRROS_VERSION}-x86_64-disk.img"
+RAW="${EXTRA_DIR}/cirros-${CIRROS_VERSION}-x86_64-disk.raw"
+
+TASK="${TASK_DIR}/ultimum/glance-production.yaml"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+
+info() {
+    printf "${CYAN}==>${RESET} %s\n" "$*"
+}
+
+ok() {
+    printf "${GREEN}[ OK ]${RESET} %s\n" "$*"
+}
+
+warn() {
+    printf "${YELLOW}[WARN]${RESET} %s\n" "$*"
+}
+
+fail() {
+    printf "${RED}[FAIL]${RESET} %s\n" "$*"
+}
+
+die() {
+    fail "$*"
+    exit 1
+}
+
+
+printf "\n${BOLD}Ultimum Rally Glance validation${RESET}\n"
+printf "================================\n\n"
+
+
+#
+# Data volume
+#
+
+info "Checking Rally data volume"
+
+if [ ! -d "${DATA_DIR}" ]; then
+    die "Missing data volume: ${DATA_DIR}"
+fi
+
+ok "Data volume available: ${DATA_DIR}"
+
+
+#
+# Extra directory
+#
+
+if ! mkdir -p "${EXTRA_DIR}"; then
+    die "Unable to create ${EXTRA_DIR}"
+fi
+
+ok "Image cache directory: ${EXTRA_DIR}"
+
+
+#
+# Requirements
+#
+
+info "Checking required commands"
+
+for cmd in rally curl qemu-img; do
+    if ! command -v "${cmd}" >/dev/null 2>&1; then
+        die "Required command '${cmd}' is not installed"
+    fi
+done
+
+ok "Required commands available"
+
+
+#
+# Rally deployment
+#
+
+info "Checking Rally deployment"
+
+if ! rally deployment show >/dev/null 2>&1; then
+    die "No active Rally deployment"
+fi
+
+ok "Rally deployment is active"
+
+
+#
+# QCOW2
+#
+
+info "Preparing CirrOS ${CIRROS_VERSION} QCOW2 image"
+
+if [ -s "${QCOW2}" ]; then
+    ok "Using cached image: ${QCOW2}"
+else
+    info "Downloading ${CIRROS_URL}"
+
+    rm -f "${QCOW2}.tmp"
+
+    if ! curl \
+        --fail \
+        --location \
+        --retry 3 \
+        --retry-delay 2 \
+        --output "${QCOW2}.tmp" \
+        "${CIRROS_URL}"; then
+
+        rm -f "${QCOW2}.tmp"
+        die "Unable to download CirrOS image"
+    fi
+
+    mv "${QCOW2}.tmp" "${QCOW2}"
+
+    ok "Downloaded ${QCOW2}"
+fi
+
+
+#
+# Validate QCOW2
+#
+
+info "Validating QCOW2 image"
+
+if ! qemu-img check "${QCOW2}" >/dev/null; then
+    die "QCOW2 image validation failed"
+fi
+
+ok "QCOW2 image is valid"
+
+
+#
+# RAW
+#
+
+info "Preparing RAW image"
+
+if [ -s "${RAW}" ]; then
+    ok "Using cached RAW image: ${RAW}"
+else
+    info "Converting QCOW2 -> RAW"
+
+    rm -f "${RAW}.tmp"
+
+    if ! qemu-img convert \
+        -p \
+        -f qcow2 \
+        -O raw \
+        "${QCOW2}" \
+        "${RAW}.tmp"; then
+
+        rm -f "${RAW}.tmp"
+        die "QCOW2 to RAW conversion failed"
+    fi
+
+    mv "${RAW}.tmp" "${RAW}"
+
+    ok "Created ${RAW}"
+fi
+
+
+#
+# Show images
+#
+
+printf "\n"
+info "Prepared test images"
+
+qemu-img info "${QCOW2}" | sed 's/^/    /'
+
+printf "\n"
+
+qemu-img info "${RAW}" | sed 's/^/    /'
+
+
+#
+# Rally task
+#
+
+printf "\n"
+
+if [ ! -f "${TASK}" ]; then
+    die "Rally task not found: ${TASK}"
+fi
+
+ok "Rally task found: ${TASK}"
+
+
+#
+# Validate task
+#
+
+info "Validating Rally task"
+
+if ! rally task validate \
+    "${TASK}" \
+    --task-args \
+    "{\"qcow2_image\":\"${QCOW2}\",\"raw_image\":\"${RAW}\"}"; then
+
+    die "Rally task validation failed"
+fi
+
+ok "Rally task validation passed"
+
+
+#
+# Run
+#
+
+printf "\n"
+printf "${BOLD}Starting Glance validation${RESET}\n\n"
+
+rally task start \
+    "${TASK}" \
+    --task-args \
+    "{\"qcow2_image\":\"${QCOW2}\",\"raw_image\":\"${RAW}\"}"
+
+RC=$?
+
+printf "\n"
+
+if [ "${RC}" -eq 0 ]; then
+    ok "Glance validation finished successfully"
+else
+    fail "Glance validation failed"
+fi
+
+
+#
+# Last task
+#
+
+TASK_UUID="$(rally task list --uuids-only 2>/dev/null | head -n1 || true)"
+
+if [ -n "${TASK_UUID}" ]; then
+    printf "\n"
+    info "Task UUID: ${TASK_UUID}"
+
+    printf "\nUseful commands:\n"
+    printf "  rally task detailed ${TASK_UUID}\n"
+    printf "  rally task report ${TASK_UUID} --out ${DATA_DIR}/glance-report.html\n"
+fi
+
+printf "\n"
+
+exit "${RC}"
