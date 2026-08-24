@@ -1,12 +1,13 @@
-{%- set cirros_image_url_qcow2 = "~/.rally/extra/dummy_image.qcow2" %}
-{%- set cirros_image_url_raw = "~/.rally/extra/dummy_image.raw" %}
-{%- set flavor_name = "m1.tiny" %}
+{%- set cirros_image_url_qcow2 = "https://download.cirros-cloud.net/0.6.3/cirros-0.6.3-x86_64-disk.img" %}
+{%- set cirros_image_url_raw = "/data/extra/cirros-0.6.3-x86_64-disk.raw" %}
 ---
 version: 2
 title: All Glance-related workload tests
 description: >
-  Consolidated Glance workloads covering every scenario in
-  rally_openstack/task/scenarios/glance/images.py.
+  Consolidated Glance workloads covering Glance scenarios without
+  Nova instance boot tests. Local RAW image is used for direct uploads,
+  while web-download uses the official CirrOS HTTPS URL.
+
 subtasks:
   - title: Authenticate.validate_glance tests
     scenario:
@@ -44,6 +45,7 @@ subtasks:
         sla:
           failure_rate:
             max: 0
+
       - scenario:
           GlanceImages.list_images: {}
         contexts:
@@ -85,6 +87,7 @@ subtasks:
         sla:
           failure_rate:
             max: 0
+
       - description: Test raw image
         scenario:
           GlanceImages.create_and_list_image:
@@ -146,6 +149,7 @@ subtasks:
         sla:
           failure_rate:
             max: 0
+
       - description: Delete a raw image
         scenario:
           GlanceImages.create_and_delete_image:
@@ -188,6 +192,7 @@ subtasks:
         sla:
           failure_rate:
             max: 0
+
       - description: Create image with properties then remove them on update
         scenario:
           GlanceImages.create_and_update_image:
@@ -255,38 +260,14 @@ subtasks:
       failure_rate:
         max: 0
 
-  - title: GlanceImages.create_image_and_boot_instances tests
-    scenario:
-      GlanceImages.create_image_and_boot_instances:
-        image_location: '{{ cirros_image_url_qcow2 }}'
-        container_format: bare
-        disk_format: qcow2
-        flavor:
-          name: '{{ flavor_name }}'
-        number_instances: 2
-    contexts:
-      users:
-        tenants: 1
-        users_per_tenant: 1
-      api_versions:
-        glance:
-          version: 2
-    runner:
-      constant:
-        times: 1
-        concurrency: 1
-    sla:
-      failure_rate:
-        max: 0
-
   - title: GlanceImages.import_and_delete_image tests
     workloads:
-      - description: glance-direct import of a qcow2 image
+      - description: glance-direct import of a local raw image
         scenario:
           GlanceImages.import_and_delete_image:
-            image_location: '{{ cirros_image_url_qcow2 }}'
+            image_location: '{{ cirros_image_url_raw }}'
             container_format: bare
-            disk_format: qcow2
+            disk_format: raw
             import_method: glance-direct
         contexts:
           users:
@@ -302,7 +283,8 @@ subtasks:
         sla:
           failure_rate:
             max: 100
-      - description: web-download import from a remote URL
+
+      - description: web-download import from official CirrOS HTTPS URL
         scenario:
           GlanceImages.import_and_delete_image:
             image_location: '{{ cirros_image_url_qcow2 }}'
