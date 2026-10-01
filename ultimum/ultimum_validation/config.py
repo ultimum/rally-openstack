@@ -87,6 +87,7 @@ def resource_names(cfg):
         ),
         ("subnet", cfg["network"]["subnet"], "network.subnet", "subnet"),
         ("router", cfg["network"]["router"], "network.router", "router"),
+        ("ssh_key", cfg["ssh_key"], "ssh_key", "key"),
     )
     for kind, options, path, suffix in specs:
         create = cfg["create_" + kind]
@@ -109,6 +110,24 @@ def resource_names(cfg):
                 f"create_{kind}=false requires explicit {path}.name"
                 + (" or id" if kind in ("network", "subnet", "router") else "")
             )
+    key_name = cfg["ssh_key"]["name"]
+    if not re.fullmatch(r"[a-zA-Z0-9_-]{1,255}", key_name):
+        raise InvalidError(
+            "ssh_key.name must be 1-255 letters/digits/underscores/hyphens"
+        )
+    directory = pathlib.Path(cfg["ssh_key"]["directory"])
+    if not directory.is_absolute():
+        raise InvalidError("ssh_key.directory must be an absolute path")
+    guest = cfg["guest"]
+    if guest["ssh_private_key"] is None:
+        guest["ssh_private_key"] = str(directory / key_name)
+    if guest["ssh_public_key"] is None:
+        guest["ssh_public_key"] = guest["ssh_private_key"] + ".pub"
+    for field in ("ssh_private_key", "ssh_public_key"):
+        if not pathlib.Path(guest[field]).is_absolute():
+            raise InvalidError(f"guest.{field} must be an absolute path")
+    if guest["ssh_private_key"] == guest["ssh_public_key"]:
+        raise InvalidError("SSH private and public key paths must differ")
 
 
 def load(path):
@@ -246,7 +265,10 @@ def validate(cfg, scenario=None):
             "external_fixed_ip also requires router.external_subnet"
         )
     for key in ("ssh_private_key", "ssh_public_key"):
-        if not pathlib.Path(cfg["guest"][key]).is_file():
+        if (
+            not cfg["create_ssh_key"]
+            and not pathlib.Path(cfg["guest"][key]).is_file()
+        ):
             raise InvalidError(f"Missing guest.{key} file")
     if scenario is None:
         return

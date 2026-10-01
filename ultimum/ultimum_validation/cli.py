@@ -20,6 +20,7 @@ from .config import fingerprint
 from .config import load
 from .config import openrc
 from .config import validate
+from .keys import ensure_ssh_key
 from .prepare import clouds
 from .prepare import ensure_identity
 from .prepare import preflight
@@ -154,7 +155,9 @@ def prepare(cfg, rc, admin, cloud):
             "Test user did not authenticate into the configured project"
         )
     set_quotas(cfg, admin, project_id)
+    keypair_name = ensure_ssh_key(cfg, cloud)
     runtime = prepare_network(cfg, cloud, resolve_base(cfg, cloud))
+    runtime["keypair_name"] = keypair_name
     runtime["auth_url"] = rc["OS_AUTH_URL"]
     runtime["environment_id"] = register_environment(cfg, rc, runtime)
     write_json(
@@ -529,6 +532,7 @@ def main(argv=None):
         admin, cloud = clouds(cfg, rc)
         if args.command == "check":
             validate(cfg, args.scenario)
+            ensure_ssh_key(cfg, cloud, read_only=True)
             # Authentication as configured user verifies project, password and
             # scope.
             print("Test project: " + cloud.project_id)

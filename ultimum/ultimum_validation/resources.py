@@ -2,7 +2,6 @@
 
 import base64
 import contextlib
-import pathlib
 import time
 import uuid
 
@@ -100,23 +99,8 @@ class Resources:
     def access(self):
         if self.keypair:
             return
-        self.keypair = self.name("key")
-        self.ledger.own(
-            "compute",
-            "/os-keypairs/" + self.keypair,
-            self.keypair,
-            kind="keypair",
-        )
-        public_key = (
-            pathlib.Path(self.cfg["guest"]["ssh_public_key"])
-            .read_text()
-            .strip()
-        )
-        self.cloud.post(
-            "compute",
-            "/os-keypairs",
-            {"keypair": {"name": self.keypair, "public_key": public_key}},
-        )
+        self.keypair = self.runtime["keypair_name"]
+        self.ledger.event(f"REUSE prepared SSH keypair: {self.keypair}")
         self.ssh_group = self.security_group("access")
         self.rule(
             self.ssh_group,
@@ -760,5 +744,5 @@ class Resources:
             )
             raise InvalidError("Cleanup incomplete: " + "; ".join(errors))
         self.ledger.event(
-            "OK cleanup complete; shared resources retained"
+            "OK cleanup complete; shared resources and SSH key retained"
         )

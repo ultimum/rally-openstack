@@ -22,6 +22,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "ultimum"))
 from ultimum_validation import cli  # noqa: E402
 from ultimum_validation import config  # noqa: E402
+from ultimum_validation import keys  # noqa: E402
 from ultimum_validation import prepare  # noqa: E402
 from ultimum_validation import progress  # noqa: E402
 from ultimum_validation.cloud import APIError  # noqa: E402
@@ -63,6 +64,7 @@ class RunnerCase(unittest.TestCase):
             external_network_id="external",
             image_id="image",
             flavor_id="flavor",
+            keypair_name="e2e-key",
         )
 
     def engine(self):
@@ -78,7 +80,14 @@ class ConfigTest(RunnerCase):
         return config.load(path)
 
     def test_creation_flags_require_explicit_existing_references(self):
-        for kind in ("project", "user", "network", "subnet", "router"):
+        for kind in (
+            "project",
+            "user",
+            "network",
+            "subnet",
+            "router",
+            "ssh_key",
+        ):
             with self.subTest(kind=kind):
                 with self.assertRaisesRegex(config.InvalidError, "explicit"):
                     self.load_values({"create_" + kind: False})
@@ -92,6 +101,10 @@ class ConfigTest(RunnerCase):
         )
         self.assertEqual("my-e2e-subnet", cfg["network"]["subnet"]["name"])
         self.assertEqual("my-e2e-router", cfg["network"]["router"]["name"])
+        self.assertEqual("my-e2e-key", cfg["ssh_key"]["name"])
+        self.assertEqual(
+            "/data/ultimum/keys/my-e2e-key", cfg["guest"]["ssh_private_key"]
+        )
         self.cfg["resources_prefix"] = "my-e2e"
         self.assertTrue(self.engine().name("vm").startswith("my-e2e-"))
         cfg = self.load_values(
@@ -623,6 +636,7 @@ class PrepareTest(RunnerCase):
                 cli, "clouds", return_value=(self.admin, self.cloud)
             ),
             mock.patch.object(cli, "preflight", return_value={}),
+            mock.patch.object(cli, "ensure_ssh_key") as ssh_key,
             mock.patch.object(cli, "prepare") as provision,
             mock.patch("sys.stdout", new_callable=io.StringIO),
         ):
@@ -630,6 +644,142 @@ class PrepareTest(RunnerCase):
                 0, cli.main(["--config", str(path), "check", "placement"])
             )
             provision.assert_not_called()
+            self.assertTrue(ssh_key.call_args.kwargs["read_only"])
+
+
+class SSHKeyTest(RunnerCase):
+    def setUp(self):
+        super().setUp()
+        self.private = self.directory / "keys" / "e2e-key"
+        self.public = self.private.with_suffix(".pub")
+        self.cfg["guest"]["ssh_private_key"] = str(self.private)
+        self.cfg["guest"]["ssh_public_key"] = str(self.public)
+        self.cloud.get.side_effect = APIError("compute", 404)
+        self.cloud.post.side_effect = lambda service, path, body: body
+
+    def generate(self):
+        return keys.ensure_ssh_key(self.cfg, self.cloud)
+
+    def reuse_cloud_key(self):
+        self.cloud.get.side_effect = None
+        self.cloud.get.return_value = {
+            "keypair": {"public_key": self.public.read_text()}
+        }
+        self.cloud.post.reset_mock()
+
+    def test_generate_import_and_reuse_without_replacing_material(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual("e2e-key", self.generate())
+            self.assertEqual(3072, keys.read_private(self.private).get_bits())
+            before = self.private.read_bytes()
+            self.reuse_cloud_key()
+            self.generate()
+        self.assertEqual(before, self.private.read_bytes())
+        self.assertEqual(0o600, self.private.stat().st_mode & 0o777)
+        self.assertEqual(0o600, self.public.stat().st_mode & 0o777)
+        self.cloud.post.assert_not_called()
+        self.assertIn("CREATE SSH private key", output.getvalue())
+        self.assertIn("REUSE SSH private key", output.getvalue())
+        self.assertNotIn("BEGIN RSA PRIVATE", output.getvalue())
+
+    def test_false_reuses_but_never_creates_local_or_remote_key(self):
+        self.cfg["create_ssh_key"] = False
+        with self.assertRaises(config.InvalidError):
+            self.generate()
+        self.assertFalse(self.private.parent.exists())
+        self.cloud.post.assert_not_called()
+        self.cfg["create_ssh_key"] = True
+        self.generate()
+        self.cfg["create_ssh_key"] = False
+        self.cloud.post.reset_mock()
+        with self.assertRaisesRegex(config.InvalidError, "Nova keypair"):
+            self.generate()
+        self.cloud.post.assert_not_called()
+        self.reuse_cloud_key()
+        self.generate()
+        self.cloud.post.assert_not_called()
+
+    def test_read_only_check_never_generates_a_key(self):
+        with self.assertRaises(config.InvalidError):
+            keys.ensure_ssh_key(self.cfg, self.cloud, read_only=True)
+        self.assertFalse(self.private.parent.exists())
+        self.cloud.post.assert_not_called()
+
+    def test_public_file_can_be_recovered_but_private_is_never_replaced(self):
+        self.generate()
+        private = self.private.read_bytes()
+        public = self.public.read_bytes()
+        self.reuse_cloud_key()
+        self.public.unlink()
+        self.generate()
+        self.assertEqual(private, self.private.read_bytes())
+        self.assertEqual(public, self.public.read_bytes())
+        self.private.unlink()
+        with self.assertRaisesRegex(
+            config.InvalidError, "without its private"
+        ):
+            self.generate()
+        self.assertFalse(self.private.exists())
+
+    def test_local_key_mismatch_rejected_without_cloud_mutation(self):
+        self.generate()
+        self.cloud.post.reset_mock()
+        self.public.write_text("ssh-rsa wrong-key")
+        with self.assertRaisesRegex(config.InvalidError, "do not match"):
+            self.generate()
+        self.cloud.post.assert_not_called()
+
+    def test_mismatched_nova_key_is_never_overwritten(self):
+        self.generate()
+        self.reuse_cloud_key()
+        self.cloud.get.return_value["keypair"]["public_key"] = "ssh-rsa wrong"
+        with self.assertRaisesRegex(config.InvalidError, "does not match"):
+            self.generate()
+        self.cloud.post.assert_not_called()
+        self.cloud.delete.assert_not_called()
+
+    def test_concurrent_keypair_creation_rechecks_matching_public_key(self):
+        self.generate()
+        self.cloud.get.side_effect = [
+            APIError("compute", 404),
+            {"keypair": {"public_key": self.public.read_text()}},
+        ]
+        self.cloud.post.side_effect = APIError("compute", 409)
+        self.generate()
+
+    def test_configurable_named_key_with_existing_paths(self):
+        path = self.directory / "config.yaml"
+        path.write_text(
+            yaml.safe_dump(
+                {
+                    "create_ssh_key": False,
+                    "ssh_key": {"name": "my-key"},
+                    "guest": {"ssh_private_key": str(self.private)},
+                }
+            )
+        )
+        loaded = config.load(path)
+        self.assertEqual("my-key", loaded["ssh_key"]["name"])
+        self.assertEqual(
+            str(self.private) + ".pub", loaded["guest"]["ssh_public_key"]
+        )
+        self.cfg["create_ssh_key"] = True
+        config.validate(self.cfg)  # Missing keys are provisionable.
+        self.cfg["create_ssh_key"] = False
+        with self.assertRaisesRegex(config.InvalidError, "Missing guest"):
+            config.validate(self.cfg)
+
+    def test_prepared_keypair_is_not_run_owned_or_deleted_by_cleanup(self):
+        engine = self.engine()
+        engine.security_group = mock.Mock(return_value="group")
+        engine.rule = mock.Mock()
+        engine.access()
+        self.assertEqual("e2e-key", engine.keypair)
+        self.assertFalse(self.ledger.data["resources"])
+        engine.cleanup()
+        self.cloud.post.assert_not_called()
+        self.cloud.delete.assert_not_called()
 
 
 class ProgressTest(RunnerCase):

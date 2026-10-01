@@ -6,7 +6,7 @@ schema_version: 1
 
 # Shared prefix for new resources, e.g. e2e-<run_uuid>-vm-... .
 # With create_*=true and name=null, use e2e-project, e2e-user,
-# e2e-net, e2e-subnet and e2e-router. Explicit names override the prefix.
+# e2e-net, e2e-subnet, e2e-router and e2e-key. Explicit names override the prefix.
 resources_prefix: e2e
 
 # true = create if missing; repeated prepare calls reuse the resource.
@@ -17,6 +17,18 @@ create_user: true
 create_network: true
 create_subnet: true
 create_router: true
+create_ssh_key: true
+
+ssh_key:
+  # Persistent local key AND Nova keypair for identity.user.
+  # true: generate/import if missing, reuse if present and matching.
+  # false: require an explicit name, existing local files and Nova keypair.
+  name: null                 # true + null = <resources_prefix>-key.
+  directory: /data/ultimum/keys
+  # Files default to <directory>/<name> and <directory>/<name>.pub.
+  # Override their paths with guest.ssh_private_key / ssh_public_key below.
+  # Generated keys are RSA 3072-bit, without a passphrase, private mode 0600.
+  # Existing keys are never replaced; a mismatch stops preparation.
 
 admin:
   # The runner sources this trusted shell file on each invocation.
@@ -121,9 +133,11 @@ network:
 
 guest:
   ssh_username: ubuntu
-  # Keys mounted into the container; import the public key into the run keypair.
-  ssh_private_key: /etc/rally/keys/ultimum
-  ssh_public_key: /etc/rally/keys/ultimum.pub
+  # null uses the persistent paths derived from ssh_key above.
+  # For existing files, set absolute paths; no manual generation is required
+  # when create_ssh_key=true. Encrypted private keys are not supported.
+  ssh_private_key: null
+  ssh_public_key: null
   ssh_port: 22
   ssh_timeout_seconds: 300
   cloud_init_timeout_seconds: 600

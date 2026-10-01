@@ -17,6 +17,26 @@ def timestamp():
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
 
+def write_new(path, text):
+    """Atomically publish a private file without replacing existing paths."""
+    path = pathlib.Path(path)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".ultimum-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(temporary, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        os.unlink(temporary)
+
+
 def write_json(path, data):
     path = pathlib.Path(path)
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
