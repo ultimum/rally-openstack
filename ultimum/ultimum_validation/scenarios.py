@@ -189,16 +189,31 @@ class Scenarios(Resources):
                 },
             )
 
-    def nova_drain(self):
-        s = self.options
+    def project_host_admin(self):
         user_roles = self.cloud.session.auth.get_access(
             self.cloud.session
         ).role_names
         if "admin" in user_roles:
             raise InvalidError(
                 "Configured test user has the admin role; revoke it before "
-                "running nova-drain"
+                "running a host scenario"
             )
+        return project_scoped_admin(self.admin, self.cloud.project_id)
+
+    def host_test_userdata(self):
+        public_key = pathlib.Path(self.cfg["guest"]["ssh_public_key"])
+        return "#cloud-config\n" + yaml.safe_dump(
+            {
+                "user": {
+                    "name": self.cfg["guest"]["ssh_username"],
+                    "ssh_authorized_keys": [public_key.read_text().strip()],
+                    "sudo": "ALL=(ALL) NOPASSWD:ALL",
+                }
+            }
+        )
+
+    def nova_drain(self):
+        s = self.options
         self.ledger.event(f"CHECK dedicated drain host: {s['host']}")
         exclusive_host(self.admin, s["host"])
         source_az = host_service(self.admin, s["host"]).get("zone")
@@ -218,19 +233,8 @@ class Scenarios(Resources):
             for host, services in hosts.items()
         ):
             raise InvalidError("No other enabled/up compute in drain host AZ")
-        placement_admin = project_scoped_admin(
-            self.admin, self.cloud.project_id
-        )
-        public_key = pathlib.Path(self.cfg["guest"]["ssh_public_key"])
-        userdata = "#cloud-config\n" + yaml.safe_dump(
-            {
-                "user": {
-                    "name": self.cfg["guest"]["ssh_username"],
-                    "ssh_authorized_keys": [public_key.read_text().strip()],
-                    "sudo": "ALL=(ALL) NOPASSWD:ALL",
-                }
-            }
-        )
+        placement_admin = self.project_host_admin()
+        userdata = self.host_test_userdata()
         active_vms = [
             self.vm(
                 host=s["host"],
@@ -371,14 +375,36 @@ class Scenarios(Resources):
         source = s["host"]
         self.ledger.event(f"CHECK dedicated evacuation host: {source}")
         exclusive_host(self.admin, source)
+        placement_admin = self.project_host_admin()
+        userdata = self.host_test_userdata()
+        source_az = host_service(self.admin, source).get("zone")
+        if not source_az:
+            raise InvalidError(
+                "Cannot resolve evacuation host availability zone"
+            )
         vms = [
-            self.vm(host=source, label="evacuate")
+            self.vm(
+                host=source,
+                az=source_az,
+                label="evacuate",
+                creator=placement_admin,
+                inject_keypair=False,
+                userdata=userdata,
+            )
             for _ in range(s["instance_count"])
         ]
         for server, _, _, guest in vms:
             before = self.describe(server)
             if before["OS-EXT-SRV-ATTR:host"] != source:
                 raise AssertionError("Evacuation test VM is on the wrong host")
+            if before["OS-EXT-AZ:availability_zone"] != source_az:
+                raise AssertionError("Evacuation test VM is in the wrong AZ")
+            if before.get("tenant_id", before.get("project_id")) != (
+                self.cloud.project_id
+            ):
+                raise AssertionError(
+                    "Evacuation test VM belongs to another project"
+                )
             # An available host in the same AZ is needed before fencing.
             self.target(server)
             guest.write("/var/tmp/ultimum-evacuate", self.run_id)

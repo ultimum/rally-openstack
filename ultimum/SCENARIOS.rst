@@ -722,8 +722,10 @@ Add this section under the existing ``scenarios`` mapping in the mounted YAML::
 1. Run ``ultimum-rally check nova-evacuate``. The host must initially be up,
    enabled and free of unrelated VMs. After creating the test VMs, the runner
    also checks for another available host in their AZ before asking for the
-   outage. Placing a VM on the source requires the test user's Nova
-   ``requested_destination`` policy permission.
+   outage. The runner scopes the existing admin OpenRC user to the configured
+   test project for host-directed VM creation, as with ``nova-drain``. The
+   test user remains ``member``; the admin user needs an existing ``admin``
+   role assignment in the test project. Cloud-init installs the test SSH key.
 2. Run ``ultimum-rally run nova-evacuate``. The runner creates volume-backed
    VMs on the dedicated host, verifies their placement, writes persistent
    data and prints the Ultimum run UUID. It enters ``WAITING_FOR_FAULT`` and

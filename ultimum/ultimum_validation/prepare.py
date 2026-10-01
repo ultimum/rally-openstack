@@ -550,12 +550,12 @@ def preflight(cfg, scenario, admin, cloud):
                 "Dedicated host must initially be up and enabled"
             )
         exclusive_host(admin, s["host"])
-        if scenario == "nova-drain":
+        if scenario in ("nova-drain", "nova-evacuate"):
             roles = cloud.session.auth.get_access(cloud.session).role_names
             if "admin" in roles:
                 raise InvalidError(
                     "Configured test user has the admin role; revoke it "
-                    "before running nova-drain"
+                    "before running a host scenario"
                 )
             project_scoped_admin(admin, cloud.project_id)
         if scenario == "masakari-host-failure":

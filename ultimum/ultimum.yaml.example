@@ -102,8 +102,8 @@ compute:
   boot_from_volume: true
   root_volume_size_gib: 10
   # Most VMs and project resources are created by identity.user. For
-  # nova-drain, the existing admin is scoped to the test project for
-  # host-directed VM creation; identity.user remains a project member.
+  # nova-drain and nova-evacuate, the existing admin is scoped to the test
+  # project for host-directed VM creation; identity.user remains a member.
   # Admin performs privileged migration; test_user checks the user's policy.
   # A 403 response never triggers an automatic fallback to admin.
   migration_actor: admin     # admin | test_user

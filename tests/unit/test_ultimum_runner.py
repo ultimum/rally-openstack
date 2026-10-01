@@ -99,9 +99,13 @@ class ConfigTest(RunnerCase):
                 {"scenarios": {"nova-drain": {"max_parallel_migrations": 2}}}
             )
 
-    def test_drain_never_grants_admin_role_to_test_user(self):
+    def test_host_scenarios_never_grant_admin_role_to_test_user(self):
         self.cfg["scenarios"]["nova-drain"]["enabled"] = True
         self.cfg["identity"]["user"]["roles"] = ["member", "admin"]
+        with self.assertRaisesRegex(config.InvalidError, "must not grant"):
+            config.validate(self.cfg)
+        self.cfg["scenarios"]["nova-drain"]["enabled"] = False
+        self.cfg["scenarios"]["nova-evacuate"]["enabled"] = True
         with self.assertRaisesRegex(config.InvalidError, "must not grant"):
             config.validate(self.cfg)
 
@@ -270,6 +274,7 @@ class ConfigTest(RunnerCase):
             mock.patch.object(
                 prepare, "exclusive_host", return_value=[]
             ) as exclusive,
+            mock.patch.object(prepare, "project_scoped_admin"),
         ):
             info = prepare.preflight(
                 self.cfg, "nova-evacuate", self.admin, self.cloud
@@ -662,12 +667,9 @@ class StateAndCleanupTest(RunnerCase):
 
     def test_drain_rejects_existing_test_user_admin_role(self):
         engine = self.engine()
-        engine.options = dict(
-            self.cfg["scenarios"]["nova-drain"], host="host1"
-        )
         self.cloud.session.auth.get_access.return_value.role_names = ["admin"]
         with self.assertRaisesRegex(config.InvalidError, "revoke it"):
-            engine.nova_drain()
+            engine.project_host_admin()
         self.admin.request.assert_not_called()
 
     def test_host_directed_server_uses_project_admin_without_keypair(self):
@@ -1456,6 +1458,13 @@ class NovaEvacuateTest(RunnerCase):
         )
         self.engine = self.engine()
         self.engine.options = self.cfg["scenarios"]["nova-evacuate"]
+        self.placement_admin = mock.Mock(project_id="test-project")
+        self.engine.project_host_admin = mock.Mock(
+            return_value=self.placement_admin
+        )
+        self.engine.host_test_userdata = mock.Mock(
+            return_value="#cloud-config\nuser: {}\n"
+        )
         self.ledger.data["config_path"] = "/etc/ultimum/ultimum.yaml"
         self.ledger.save()
         self.server = {"id": "evacuation-vm"}
@@ -1472,12 +1481,14 @@ class NovaEvacuateTest(RunnerCase):
         )
         self.engine.connect = mock.Mock(return_value=self.new_guest)
         self.engine.target = mock.Mock(return_value=("compute-test-02", {}))
-        self.service = {"state": "up"}
+        self.service = {"state": "up", "zone": "az1"}
 
         def describe(server):
             return {
                 "id": server["id"],
                 "status": "ACTIVE",
+                "tenant_id": "test-project",
+                "OS-EXT-AZ:availability_zone": "az1",
                 "OS-EXT-SRV-ATTR:host": (
                     "compute-test-02"
                     if self.admin.post.called
@@ -1526,8 +1537,14 @@ class NovaEvacuateTest(RunnerCase):
 
     def test_sends_admin_evacuate_only_after_host_is_fenced_and_down(self):
         exclusive = self.execute()
+        self.engine.project_host_admin.assert_called_once_with()
         self.engine.vm.assert_called_once_with(
-            host="compute-test-01", label="evacuate"
+            host="compute-test-01",
+            az="az1",
+            label="evacuate",
+            creator=self.placement_admin,
+            inject_keypair=False,
+            userdata="#cloud-config\nuser: {}\n",
         )
         self.old_guest.write.assert_called_once_with(
             "/var/tmp/ultimum-evacuate", self.run_id
@@ -1556,6 +1573,18 @@ class NovaEvacuateTest(RunnerCase):
             self.ledger.data["evidence"]["nova_evacuation"],
         )
 
+    def test_refuses_evacuate_vm_in_another_project(self):
+        self.engine.describe.side_effect = lambda server: {
+            "id": server["id"],
+            "status": "ACTIVE",
+            "tenant_id": "another-project",
+            "OS-EXT-AZ:availability_zone": "az1",
+            "OS-EXT-SRV-ATTR:host": "compute-test-01",
+        }
+        with self.assertRaisesRegex(AssertionError, "another project"):
+            self.execute()
+        self.admin.post.assert_not_called()
+
     def test_refuses_evacuate_while_source_service_is_up(self):
         with self.assertRaisesRegex(TimeoutError, "did not go down"):
             self.execute(host_goes_down=False)
@@ -1582,6 +1611,8 @@ class NovaEvacuateTest(RunnerCase):
             return {
                 "id": server["id"],
                 "status": "ACTIVE",
+                "tenant_id": "test-project",
+                "OS-EXT-AZ:availability_zone": "az1",
                 "OS-EXT-SRV-ATTR:host": (
                     "compute-test-01" if calls == 1 else "compute-test-02"
                 ),
