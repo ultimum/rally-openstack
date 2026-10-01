@@ -7,6 +7,9 @@ from .cloud import unique
 from .config import InvalidError
 from .config import UnsupportedError
 from .config import validate
+from .external import allocate
+from .external import contains
+from .external import resolve_pool
 from .progress import progress
 
 
@@ -141,14 +144,22 @@ def resolve_base(cfg, cloud, scope="prepare"):
         raise InvalidError(
             "network.external_network is not an external network"
         )
+    pool = resolve_pool(cfg, cloud, external["id"])
+    if pool:
+        progress(
+            f"EXTERNAL IP pool: {pool['start']} .. {pool['end']} "
+            f"on subnet {pool['subnet_id']}; tenant IPAM unchanged",
+            scope,
+        )
     return {
         "image_id": image["id"],
         "flavor_id": flavor["id"],
         "external_network_id": external["id"],
+        "external_ip_pool": pool,
     }
 
 
-def prepare_network(cfg, cloud, base):
+def prepare_network(cfg, cloud, base, admin=None):
     opts = cfg["network"]
     project_id = cloud.project_id
     managed = "Managed by ultimum-rally prepare"
@@ -261,8 +272,31 @@ def prepare_network(cfg, cloud, base):
             fixed["ip_address"] = opts["router"]["external_fixed_ip"]
         gateway["external_fixed_ips"] = [fixed]
 
+    pool = base.get("external_ip_pool") if cfg["create_router"] else None
+    if pool:
+        fixed = gateway.get(
+            "external_fixed_ips", [{"subnet_id": pool["subnet_id"]}]
+        )
+        if fixed[0]["subnet_id"] != pool["subnet_id"]:
+            raise InvalidError(
+                "Router external_subnet differs from external_ip_pool"
+            )
+        gateway["external_fixed_ips"] = fixed
+
     if router:
         actual = router.get("external_gateway_info") or {}
+        if pool:
+            addresses = actual.get("external_fixed_ips", [])
+            if not addresses or any(
+                ip["subnet_id"] != pool["subnet_id"]
+                or not contains(pool, ip["ip_address"])
+                for ip in addresses
+            ):
+                raise InvalidError(
+                    "Existing managed router gateway is outside "
+                    "external_ip_pool; reconcile it explicitly or select "
+                    "it with create_router=false"
+                )
         if actual.get("network_id") != gateway["network_id"]:
             raise InvalidError(
                 "Router is not connected to configured external network"
@@ -322,14 +356,60 @@ def prepare_network(cfg, cloud, base):
         {"name": opts["tenant_network"]["name"], "admin_state_up": True},
     )
     subnet = ensure("subnet", dict(subnet_values, network_id=network["id"]))
-    router = ensure(
-        "router",
-        {
-            "name": opts["router"]["name"],
-            "admin_state_up": True,
-            "external_gateway_info": gateway,
-        },
-    )
+    router_values = {
+        "name": opts["router"]["name"],
+        "admin_state_up": True,
+        "external_gateway_info": gateway,
+    }
+    if pool and not router:
+
+        def create_router(address, subnet_id):
+            values = dict(
+                router_values,
+                external_gateway_info=dict(
+                    gateway,
+                    external_fixed_ips=[
+                        {
+                            "subnet_id": subnet_id,
+                            "ip_address": address,
+                        }
+                    ],
+                ),
+            )
+            try:
+                result = ensure("router", values)
+            except APIError as exc:
+                if exc.status == 403:
+                    raise InvalidError(
+                        "Exact router gateway allocation was denied; check "
+                        "Neutron policy "
+                        "create_router:external_gateway_info:"
+                        "external_fixed_ips "
+                        "for the configured test user. No automatic IP or "
+                        f"admin fallback was attempted. {exc}"
+                    ) from None
+                raise
+            actual = result.get("external_gateway_info", {}).get(
+                "external_fixed_ips", []
+            )
+            if actual != [{"subnet_id": subnet_id, "ip_address": address}]:
+                raise InvalidError(
+                    "Neutron did not honor the requested router external IP"
+                )
+            progress(
+                f"OK router external IP: {address} (within configured pool)"
+            )
+            return result
+
+        router = allocate(
+            pool,
+            admin if admin is not None else cloud,
+            create_router,
+            progress,
+            requested=opts["router"]["external_fixed_ip"],
+        )
+    else:
+        router = ensure("router", router_values)
     if cfg["create_router"] and not connected(router, subnet):
         progress(f"CONNECT subnet {subnet['id']} to router {router['id']}")
         cloud.request(

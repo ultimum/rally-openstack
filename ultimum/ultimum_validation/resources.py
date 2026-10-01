@@ -2,6 +2,7 @@
 
 import base64
 import contextlib
+import ipaddress
 import time
 import uuid
 
@@ -10,6 +11,7 @@ import requests
 from .cloud import APIError
 from .cloud import wait_for
 from .config import InvalidError
+from .external import allocate
 from .guest import Guest
 from .guest import q
 from .prepare import host_service
@@ -62,7 +64,7 @@ class Resources:
             values = dict(values, description="Ultimum run " + self.run_id)
         marker = {
             k: values[k]
-            for k in ("name", "description", "metadata")
+            for k in ("name", "description", "metadata", "floating_ip_address")
             if k in values
         }
         if not marker:
@@ -127,6 +129,11 @@ class Resources:
         )["id"]
 
     def rule(self, group, protocol, port, cidr):
+        self.ledger.event(
+            f"ALLOW ingress {protocol.upper()}"
+            + (f"/{port}" if port is not None else "")
+            + f" from {cidr} in SG {group}"
+        )
         values = {
             "security_group_id": group,
             "direction": "ingress",
@@ -145,7 +152,7 @@ class Resources:
         fixed = {"subnet_id": self.runtime["subnet_id"]}
         if fixed_ip:
             fixed["ip_address"] = fixed_ip
-        return self.create(
+        port = self.create(
             "network",
             "/ports",
             "port",
@@ -156,6 +163,84 @@ class Resources:
                 "security_groups": [self.ssh_group] + (groups or []),
                 "admin_state_up": True,
             },
+        )
+        self.ledger.event(
+            f"ASSIGNED SSH SG {self.ssh_group} to port {port['id']}"
+        )
+        return port
+
+    def verify_ssh_access(self, server, port, phase="before_ssh"):
+        """Read back the VM port and the SSH ingress rule before probing."""
+        ssh_port = self.cfg["guest"]["ssh_port"]
+        source = ipaddress.ip_network(self.cfg["network"]["probe_source_cidr"])
+        self.ledger.event(
+            f"CHECK SSH ingress ({phase}): VM {server['id']}, "
+            f"port {port['id']}, SG {self.ssh_group}, "
+            f"TCP/{ssh_port} from {source}"
+        )
+        current = self.cloud.get("network", "/ports/" + port["id"])["port"]
+        group = self.cloud.get(
+            "network", "/security-groups/" + self.ssh_group
+        )["security_group"]
+        rules = group.get("security_group_rules", [])
+
+        def matches(rule):
+            if (
+                rule.get("direction") != "ingress"
+                or rule.get("ethertype") != "IPv4"
+                or str(rule.get("protocol")).lower() not in ("tcp", "6")
+                or rule.get("remote_group_id")
+                or rule.get("remote_address_group_id")
+            ):
+                return False
+            # Neutron can normalize an unrestricted IPv4 source to null.
+            remote = ipaddress.ip_network(
+                rule.get("remote_ip_prefix") or "0.0.0.0/0"
+            )
+            return (
+                remote == source
+                and rule.get("port_range_min") == ssh_port
+                and rule.get("port_range_max") == ssh_port
+            )
+
+        matching = [r["id"] for r in rules if matches(r)]
+        errors = []
+        if current.get("device_id") != server["id"]:
+            errors.append("port is not attached to the expected VM")
+        if self.ssh_group not in current.get("security_groups", []):
+            errors.append("runner SSH security group is missing from the port")
+        if current.get("port_security_enabled") is False:
+            errors.append(
+                "port security is disabled; SG rules are not applied"
+            )
+        if not matching:
+            errors.append(
+                f"SG has no configured IPv4 ingress TCP/{ssh_port} "
+                f"rule from {source}"
+            )
+        self.ledger.evidence(
+            f"ssh_access_{server['id']}_{phase}",
+            {
+                "port_id": port["id"],
+                "device_id": current.get("device_id"),
+                "security_group_id": self.ssh_group,
+                "attached_security_groups": current.get("security_groups", []),
+                "port_security_enabled": current.get("port_security_enabled"),
+                "ssh_port": ssh_port,
+                "source_cidr": str(source),
+                "matching_rule_ids": matching,
+                "security_group_rules": rules,
+                "errors": errors,
+            },
+        )
+        if errors:
+            message = f"SSH access on port {port['id']}: " + "; ".join(errors)
+            self.ledger.event("FAIL " + message)
+            raise AssertionError(message)
+        self.ledger.event(
+            f"OK SSH SG {self.ssh_group} attached to VM port {port['id']}; "
+            f"ingress TCP/{ssh_port} from {source}, "
+            f"rules {', '.join(matching)}"
         )
 
     def volume(self, size, image=None):
@@ -317,16 +402,56 @@ class Resources:
         return self.admin.get("compute", "/servers/" + server["id"])["server"]
 
     def floating(self, port_id):
-        floating = self.create(
-            "network",
-            "/floatingips",
-            "floatingip",
-            {
-                "floating_network_id": self.runtime["external_network_id"],
-                "port_id": port_id,
-                "description": "Ultimum run " + self.run_id,
-            },
-        )
+        values = {
+            "floating_network_id": self.runtime["external_network_id"],
+            "port_id": port_id,
+            "description": "Ultimum run " + self.run_id,
+        }
+        pool = self.runtime.get("external_ip_pool")
+        if (
+            self.cfg["network"]["external_ip_pool"]["start"] is not None
+            and not pool
+        ):
+            raise InvalidError(
+                "External IP pool was not resolved; run prepare again"
+            )
+        if pool:
+
+            def create_floating(address, subnet_id):
+                try:
+                    obj = self.create(
+                        "network",
+                        "/floatingips",
+                        "floatingip",
+                        dict(
+                            values,
+                            floating_ip_address=address,
+                            subnet_id=subnet_id,
+                        ),
+                    )
+                except APIError as exc:
+                    if exc.status == 403:
+                        raise InvalidError(
+                            "Exact floating IP allocation was denied; check "
+                            "Neutron policy "
+                            "create_floatingip:floating_ip_address "
+                            "for the configured test user. No automatic IP or "
+                            f"admin fallback was attempted. {exc}"
+                        ) from None
+                    raise
+                if obj["floating_ip_address"] != address:
+                    raise AssertionError(
+                        "Neutron did not honor the requested floating IP"
+                    )
+                return obj
+
+            floating = allocate(
+                pool, self.admin, create_floating, self.ledger.event
+            )
+        else:
+            floating = self.create(
+                "network", "/floatingips", "floatingip", values
+            )
         self.ledger.event(
             f"OK floating IP {floating['floating_ip_address']} "
             f"-> port {port_id}"
@@ -337,6 +462,7 @@ class Resources:
         port = kwargs.pop("port", None) or self.port()
         server = self.server(port=port, **kwargs)
         floating = self.floating(port["id"])
+        self.verify_ssh_access(server, port)
         guest = self.connect(server, floating)
         return server, port, floating, guest
 

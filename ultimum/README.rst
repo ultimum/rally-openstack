@@ -37,6 +37,28 @@ Set the test user's password, image, flavor, external network and source CIDR
 in the YAML. An absent OpenRC at first startup is reported as a warning;
 the runner reads it again when you invoke ``prepare`` or ``run``.
 
+To restrict **external** addresses allocated by the tests, add this section
+under the existing ``network`` mapping in ``/etc/ultimum/ultimum.yaml``::
+
+    network:
+      external_ip_pool:
+        subnet: null             # Auto-detect; or external subnet name/UUID.
+        start: 92.119.67.128
+        end: 92.119.67.250
+
+Both bounds are inclusive. The runner uses this range for VM/Octavia floating
+IPs and a newly created router's gateway. Occupied IPs are skipped; exhaustion
+fails without allocating outside the range. An existing router selected with
+``create_router: false`` is reused unchanged. Tenant IPs remain automatic;
+``network.subnet`` controls tenant DHCP/IPAM separately. ``probe_source_cidr``
+only controls which source addresses the security group permits.
+
+Selecting exact external IPs requires the configured test user's Neutron
+policy permissions; see the external address section in ``SCENARIOS.rst``.
+Rebuild the image for this runner feature. Existing mounted configuration is
+preserved, so add these settings to it explicitly; null bounds keep the
+previous automatic external allocation behavior.
+
 ``create_ssh_key: true`` generates a persistent local key and imports its
 public part into a named Nova keypair for the test user. Existing matching
 keys are reused. ``create_ssh_key: false`` requires ``ssh_key.name``, matching

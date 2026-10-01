@@ -107,6 +107,23 @@ network:
   # When false, only resolve and validate; names must be unique in the project.
   # With create_router=false, the router must already connect to the subnet.
   external_network: null      # Required name/UUID for floating IP scenarios.
+  # EXTERNAL addresses allocated by tests: floating IPs (VMs and Octavia)
+  # and the gateway of a NEW router. This does NOT change tenant DHCP/IPAM.
+  # Set BOTH bounds to restrict allocations, e.g. 92.119.67.128 .. .250.
+  # Bounds are inclusive. No free address -> fail, NEVER allocate outside.
+  # null bounds = let Neutron allocate normally (no runner-side restriction).
+  # Existing routers selected with create_router=false are reused unchanged.
+  # Neutron creates the external FIP/gateway service ports with the exact IP.
+  # The configured test user needs permission to select an explicit IP:
+  # create_floatingip:floating_ip_address and (for a new router)
+  # create_router:external_gateway_info:external_fixed_ips.
+  # A policy denial stops the operation; there is no admin/automatic-IP fallback.
+  external_ip_pool:
+    subnet: null             # External subnet name/UUID; null = unique match.
+    start: null              # Example: 92.119.67.128
+    end: null                # Example: 92.119.67.250
+  # TENANT network: VM ports still get private addresses automatically from
+  # the subnet below; its allocation pool is unrelated to external_ip_pool.
   tenant_network:
     name: null               # Set name or id when create_network=false.
     id: null                 # Existing resource UUID; requires create=false.
@@ -124,11 +141,15 @@ network:
     name: null               # With create_router=false, e.g. ultimumrouter.
     id: null
     enable_snat: true
-    # Router's external subnet/IP; null = allocated automatically by Neutron.
+    # Explicit gateway override. If external_ip_pool is set, a NEW router
+    # uses that pool; an explicit external_fixed_ip must also be in the pool.
+    # With no pool/override, Neutron allocates the external address normally.
     external_subnet: null
     external_fixed_ip: null
   # Actual source CIDR seen by the cloud for the runner's SSH/ICMP/HTTP probes.
   # Set before network tests, e.g. a specific routed IP/32.
+  # This is a security-group ingress source filter, NOT an allocation pool.
+  # 0.0.0.0/0 permits probes from any IPv4 source; it does not select VM/FIP IPs.
   probe_source_cidr: null
 
 guest:

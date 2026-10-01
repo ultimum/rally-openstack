@@ -98,6 +98,72 @@ The original ``identity.*.create_if_missing``, ``network.mode`` and
 both the old and new options with different values makes the configuration
 invalid.
 
+External addresses, tenant addresses and probe sources
+-----------------------------------------------------
+
+These settings have different purposes:
+
+* ``network.external_ip_pool`` restricts **new external allocations**:
+  floating IPs of all test VMs, Octavia's floating VIP and the external
+  gateway of a newly created router.
+* ``network.subnet.allocation_pool_start/end`` describe the **private tenant
+  subnet**. VM ports obtain private addresses through normal Neutron IPAM
+  and DHCP. Only the fixed-IP DHCP scenario requests a specific private IP.
+  Nova Count continues to let Nova create the tenant ports automatically.
+* ``network.probe_source_cidr`` is the **source filter of SG ingress rules**
+  for SSH/ICMP/HTTP probes from the runner. It does not allocate any IPs.
+  ``0.0.0.0/0`` permits these probes from any routed IPv4 source.
+
+Merge this into the existing ``network`` mapping in your mounted config::
+
+    network:
+      external_ip_pool:
+        subnet: null             # Or external subnet name/UUID.
+        start: 92.119.67.128
+        end: 92.119.67.250
+
+1. Preparation resolves the external network and the subnet containing both
+   bounds. If several subnets match, require an explicit ``subnet``.
+2. Before each allocation, read occupied external ports using the admin
+   connection, including other projects' FIP and router ports.
+3. Select a free address within the inclusive bounds, skipping the subnet's
+   network, broadcast and gateway addresses. Send the exact address in
+   ``floating_ip_address`` or the router's ``external_fixed_ips``.
+4. Neutron creates the associated external service port with that address.
+   The floating IP's ``port_id`` refers to the internal VM/VIP port. An
+   independently created external port cannot be substituted for it.
+5. If another process claims the address first, try the next address on an
+   ``IpAddressInUse`` conflict. Other errors stop the operation. Verify the
+   returned address and print the chosen IP and port association.
+6. If no address is available, fail without automatic IPAM or an allocation
+   outside the configured range. A specific ``router.external_fixed_ip``
+   must be inside the pool and is never replaced with another address.
+
+This is a runner allocation restriction, not a Neutron-wide reservation;
+other projects can still use addresses in that range. It does not modify
+the external subnet's allocation pools. Both bounds null keep Neutron's
+normal automatic external allocation behavior.
+
+With ``create_router: false``, the existing router remains read-only even if
+its gateway address is outside the range. A router reused with
+``create_router: true`` must already have its gateway in the configured pool;
+otherwise preparation fails and asks for explicit reconciliation. It never
+moves a gateway automatically. Shared routers are retained by run cleanup;
+run-owned floating IPs are released according to ``execution.cleanup``.
+
+Resource creation still runs as ``identity.user``. Exact external selection
+requires these Neutron policy permissions:
+
+* ``create_floatingip:floating_ip_address`` for VM and VIP FIPs;
+* ``create_router:external_gateway_info:external_fixed_ips`` for new routers.
+
+The default ``member`` role may lack them, depending on cloud version/policy.
+A 403 reports the relevant policy and request ID; it does not trigger an
+admin fallback or an unrestricted allocation. The admin connection only
+reads external-port occupancy for this allocation step. Policy references:
+`floating IP policies <https://github.com/openstack/neutron/blob/master/neutron/conf/policies/floatingip.py>`_
+and `router policies <https://github.com/openstack/neutron/blob/master/neutron/conf/policies/router.py>`_.
+
 Persistent SSH key
 ------------------
 
@@ -319,9 +385,16 @@ storage.availability_zone=null for placement, otherwise the test is UNSUPPORTED.
 2. Nova - live migration
 ------------------------
 
-1. Creates a port, a root volume according to the compute configuration,
-   a VM and a floating IP.
-2. Waits for SSH and cloud-init completion. Determines the actual host and AZ.
+1. Creates an access SG with ingress TCP/``guest.ssh_port`` (22 by default)
+   and ICMP from ``network.probe_source_cidr``. Attaches the SG to a tenant
+   port with an automatically assigned private IP. Creates a root volume
+   according to the compute configuration, a VM and a floating IP from
+   ``external_ip_pool`` when configured.
+2. Reads the VM port and SG back from Neutron. Checks the port belongs to
+   this VM, carries the access SG and has the configured SSH ingress rule;
+   rejects explicitly disabled port security. Prints the checks and stores
+   evidence, then waits for real SSH and cloud-init completion. Determines
+   the actual host and AZ. All scenarios using SSH share this initial check.
 3. Finds another up/enabled host in the same AZ, or validates target_host.
 4. Starts ping from the runner and a heartbeat on one persistent SSH channel.
    Waits for a usable baseline before migration.
@@ -331,7 +404,10 @@ storage.availability_zone=null for placement, otherwise the test is UNSUPPORTED.
 6. Verifies that the AZ is unchanged, and checks lost ping packets and the
    largest SSH heartbeat gap against the limits. SSH does not reconnect
    during measurement.
-7. Saves source/target hosts, measurements and ping output; performs cleanup.
+7. Rechecks the port and SSH rule after migration and executes a command on
+   the existing SSH connection. Saves source/target hosts, SG evidence,
+   measurements and ping output; performs cleanup. An API rule check does
+   not replace the SSH and ping data-plane measurements.
 
 .. scenario: nova-live-migration-tpm
 

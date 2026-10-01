@@ -10,8 +10,9 @@ from .config import UnsupportedError
 
 
 class APIError(Exception):
-    def __init__(self, service, status, request_id=""):
+    def __init__(self, service, status, request_id="", error_type=None):
         self.status = status
+        self.error_type = error_type
         super().__init__(
             f"{service} API returned HTTP {status} (request {request_id})"
         )
@@ -160,10 +161,28 @@ class Cloud:
             connect_retries=0,
         )
         if response.status_code >= 400:
+            error_type = None
+            if service == "network":
+                try:
+                    data = response.json()
+                except ValueError:
+                    data = {}
+                error = (
+                    data.get("NeutronError")
+                    if isinstance(data, dict)
+                    else None
+                )
+                if isinstance(error, dict) and isinstance(
+                    error.get("type"), str
+                ):
+                    # Retain the machine-readable type for allocation races;
+                    # never log the response message, detail or arbitrary body.
+                    error_type = error["type"]
             raise APIError(
                 service,
                 response.status_code,
                 response.headers.get("x-openstack-request-id", "unknown"),
+                error_type=error_type,
             )
         return response.json() if response.content else {}
 

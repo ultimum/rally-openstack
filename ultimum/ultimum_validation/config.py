@@ -241,11 +241,34 @@ def validate(cfg, scenario=None):
     net = cfg["network"]
     if not net["external_network"]:
         raise InvalidError("Set network.external_network (name or UUID)")
+    pool = net["external_ip_pool"]
+    if (pool["start"] is None) != (pool["end"] is None):
+        raise InvalidError("external_ip_pool requires both start and end")
+    if pool["start"] is None and pool["subnet"] is not None:
+        raise InvalidError("external_ip_pool.subnet requires start and end")
+    if pool["start"] is not None:
+        start, end = (ipaddress.ip_address(pool[k]) for k in ("start", "end"))
+        if start.version != 4 or end.version != 4 or start > end:
+            raise InvalidError("external_ip_pool needs IPv4 start <= end")
+        fixed = net["router"]["external_fixed_ip"]
+        if (
+            cfg["create_router"]
+            and fixed
+            and not (
+                int(start) <= int(ipaddress.ip_address(fixed)) <= int(end)
+            )
+        ):
+            raise InvalidError(
+                "Router external_fixed_ip is outside external_ip_pool"
+            )
     if not net["probe_source_cidr"]:
         raise InvalidError(
             "Set network.probe_source_cidr to the runner's actual source CIDR"
         )
-    ipaddress.ip_network(net["probe_source_cidr"])
+    if ipaddress.ip_network(net["probe_source_cidr"]).version != 4:
+        raise InvalidError(
+            "network.probe_source_cidr must be IPv4 for the SSH/ICMP rules"
+        )
     subnet = net["subnet"]
     cidr = ipaddress.ip_network(subnet["cidr"])
     if cidr.version != 4:

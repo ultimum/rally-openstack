@@ -464,6 +464,104 @@ class PrepareTest(RunnerCase):
         self.cloud.post.assert_not_called()
         self.cloud.request.assert_not_called()
 
+    def test_new_router_external_pool_keeps_tenant_subnet_automatic(self):
+        records = self.network_api()
+        self.admin.list.return_value = [
+            {
+                "fixed_ips": [
+                    {
+                        "subnet_id": "public-subnet",
+                        "ip_address": "92.119.67.128",
+                    }
+                ]
+            }
+        ]
+        pool = {
+            "network_id": "external",
+            "subnet_id": "public-subnet",
+            "start": "92.119.67.128",
+            "end": "92.119.67.250",
+            "reserved": [],
+        }
+        base = {"external_network_id": "external", "external_ip_pool": pool}
+        first = prepare.prepare_network(self.cfg, self.cloud, base, self.admin)
+        self.assertEqual(
+            [{"subnet_id": "public-subnet", "ip_address": "92.119.67.129"}],
+            records["routers"][0]["external_gateway_info"][
+                "external_fixed_ips"
+            ],
+        )
+        subnet = records["subnets"][0]
+        self.assertEqual("10.240.0.0/24", subnet["cidr"])
+        self.assertEqual(
+            [{"start": "10.240.0.100", "end": "10.240.0.220"}],
+            subnet["allocation_pools"],
+        )
+        self.assertEqual(
+            first,
+            prepare.prepare_network(self.cfg, self.cloud, base, self.admin),
+        )
+        self.assertEqual(3, self.cloud.post.call_count)
+        self.admin.post.assert_not_called()
+
+    def test_existing_unmanaged_router_outside_external_pool_is_read_only(
+        self,
+    ):
+        records = self.network_api()
+        base = {"external_network_id": "external"}
+        prepare.prepare_network(self.cfg, self.cloud, base)
+        records["routers"][0]["external_gateway_info"][
+            "external_fixed_ips"
+        ] = [{"subnet_id": "public-subnet", "ip_address": "92.119.67.5"}]
+        base["external_ip_pool"] = {
+            "network_id": "external",
+            "subnet_id": "public-subnet",
+            "start": "92.119.67.128",
+            "end": "92.119.67.250",
+            "reserved": [],
+        }
+        self.cloud.post.reset_mock()
+        self.cloud.request.reset_mock()
+        with self.assertRaisesRegex(
+            config.InvalidError, "outside external_ip_pool"
+        ):
+            prepare.prepare_network(self.cfg, self.cloud, base, self.admin)
+        self.cfg["create_router"] = False
+        prepare.prepare_network(self.cfg, self.cloud, base, self.admin)
+        self.cloud.post.assert_not_called()
+        self.cloud.request.assert_not_called()
+        self.admin.list.assert_not_called()
+
+    def test_new_router_exact_address_policy_denial_has_no_fallback(self):
+        self.network_api()
+        create = self.cloud.post.side_effect
+
+        def deny_router(service, path, body):
+            if path == "/routers":
+                raise APIError("network", 403, "req-router")
+            return create(service, path, body)
+
+        self.cloud.post.side_effect = deny_router
+        self.admin.list.return_value = []
+        base = {
+            "external_network_id": "external",
+            "external_ip_pool": {
+                "network_id": "external",
+                "subnet_id": "public-subnet",
+                "start": "92.119.67.128",
+                "end": "92.119.67.250",
+                "reserved": [],
+            },
+        }
+        with self.assertRaisesRegex(
+            config.InvalidError,
+            "create_router:external_gateway_info:external_fixed_ips",
+        ):
+            prepare.prepare_network(self.cfg, self.cloud, base, self.admin)
+        self.assertEqual(3, self.cloud.post.call_count)
+        self.admin.post.assert_not_called()
+        self.cloud.request.assert_not_called()
+
     def test_independent_flags_allow_new_router_on_existing_network(self):
         records = self.network_api()
         records["networks"] = [

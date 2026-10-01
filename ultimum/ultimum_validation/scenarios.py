@@ -126,10 +126,11 @@ class Scenarios(Resources):
 
     def nova_live_migration(self):
         with self.step("Create VM, floating IP and establish SSH"):
-            server, _, _, guest = self.vm()
+            server, port, _, guest = self.vm()
         with self.step("Migrate while measuring ping and persistent SSH"):
             with Continuity(guest, self.options, self.ledger):
                 self.migrate(server, self.options["target_host"])
+        self.verify_ssh_access(server, port, phase="after_migration")
         guest.command("true")
 
     def nova_live_migration_tpm(self):

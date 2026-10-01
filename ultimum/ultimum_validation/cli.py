@@ -158,7 +158,9 @@ def prepare(cfg, rc, admin, cloud):
         )
     set_quotas(cfg, admin, project_id)
     keypair_name = ensure_ssh_key(cfg, cloud)
-    runtime = prepare_network(cfg, cloud, resolve_base(cfg, cloud))
+    runtime = prepare_network(
+        cfg, cloud, resolve_base(cfg, cloud), admin=admin
+    )
     runtime["keypair_name"] = keypair_name
     runtime["auth_url"] = rc["OS_AUTH_URL"]
     runtime["environment_id"] = register_environment(cfg, rc, runtime)
