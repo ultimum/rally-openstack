@@ -478,7 +478,7 @@ def preflight(cfg, scenario, admin, cloud):
         compute_version = (
             "2.67"  # Volume type in image-to-volume block mapping.
         )
-    if scenario in ("nova-drain", "masakari-host-failure"):
+    if scenario in ("nova-drain", "nova-evacuate", "masakari-host-failure"):
         compute_version = "2.74"
     if scenario == "nova-shelve-unshelve":
         compute_version = "2.77"
@@ -515,7 +515,7 @@ def preflight(cfg, scenario, admin, cloud):
             )
         info["tpm_flavor_id"] = flavor["id"]
         info["tpm_extra_specs"] = specs
-    if scenario in ("nova-drain", "masakari-host-failure"):
+    if scenario in ("nova-drain", "nova-evacuate", "masakari-host-failure"):
         progress(f"CHECK dedicated host: {s['host']}", scenario)
         service = host_service(admin, s["host"])
         if service["state"] != "up" or service["status"] != "enabled":

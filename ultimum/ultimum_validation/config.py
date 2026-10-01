@@ -25,6 +25,7 @@ SCENARIOS = (
     "cinder-volume-extend",
     "masakari-host-failure",
     "nova-shelve-unshelve",
+    "nova-evacuate",
 )
 
 
@@ -305,12 +306,15 @@ def validate(cfg, scenario=None):
     s = cfg["scenarios"][scenario]
     if not s["enabled"]:
         raise InvalidError(f"{scenario} is disabled in configuration")
-    if scenario in ("nova-drain", "masakari-host-failure"):
+    if scenario in ("nova-drain", "nova-evacuate", "masakari-host-failure"):
         if not s["host"] or not s["require_exclusive_test_host"]:
             raise InvalidError(
                 "Host tests require an explicit, exclusive test host"
             )
-        if not s["restore_original_service_state"]:
+        if (
+            scenario in ("nova-drain", "masakari-host-failure")
+            and not s["restore_original_service_state"]
+        ):
             raise InvalidError("Host service restoration cannot be disabled")
     if scenario == "nova-drain" and s["max_parallel_migrations"] != 1:
         raise InvalidError(
@@ -322,6 +326,11 @@ def validate(cfg, scenario=None):
     ):
         raise InvalidError(
             "Drain requires at least one instance and nonnegative counts"
+        )
+    if scenario == "nova-evacuate" and not cfg["compute"]["boot_from_volume"]:
+        raise InvalidError(
+            "Nova evacuation requires compute.boot_from_volume=true "
+            "to verify persistent guest data"
         )
     if scenario == "masakari-host-failure":
         if s["fault_mode"] != "manual" or not s["segment"]:

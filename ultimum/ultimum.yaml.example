@@ -232,6 +232,14 @@ scenarios:
     max_parallel_migrations: 1
     restore_original_service_state: true
 
+  nova-evacuate:
+    enabled: false           # Requires a dedicated host and manual fencing.
+    host: null               # Initially empty, with no unrelated VMs.
+    instance_count: 1        # Volume-backed VMs with persistent test data.
+    require_exclusive_test_host: true
+    recovery_timeout_seconds: 600
+    # Disable automatic HA recovery on this host for this manual Nova test.
+
   nova-cloud-init:
     enabled: true
     verify_metadata_endpoint: true

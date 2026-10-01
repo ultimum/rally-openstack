@@ -30,6 +30,7 @@ from ultimum_validation import prepare  # noqa: E402
 from ultimum_validation import progress  # noqa: E402
 from ultimum_validation.cloud import APIError  # noqa: E402
 from ultimum_validation.cloud import Cloud  # noqa: E402
+from ultimum_validation.cloud import wait_for  # noqa: E402
 from ultimum_validation.guest import Guest  # noqa: E402
 from ultimum_validation.scenarios import Scenarios  # noqa: E402
 from ultimum_validation.state import Ledger  # noqa: E402
@@ -168,8 +169,8 @@ class ConfigTest(RunnerCase):
                 }
             )
 
-    def test_defaults_and_all_twelve_tasks_render_without_credentials(self):
-        self.assertEqual(12, len(config.SCENARIOS))
+    def test_defaults_and_all_thirteen_tasks_render_without_credentials(self):
+        self.assertEqual(13, len(config.SCENARIOS))
         for slug in config.SCENARIOS:
             path = ROOT / "tasks/ultimum/scenarios" / (slug + ".yaml")
             rendered = (
@@ -196,12 +197,69 @@ class ConfigTest(RunnerCase):
             )
 
     def test_disabled_host_tests_require_explicit_configuration(self):
-        for slug in ("nova-drain", "masakari-host-failure"):
+        for slug in (
+            "nova-drain", "nova-evacuate", "masakari-host-failure"
+        ):
             with self.assertRaisesRegex(config.InvalidError, "disabled"):
                 config.validate(self.cfg, slug)
             self.cfg["scenarios"][slug]["enabled"] = True
             with self.assertRaisesRegex(config.InvalidError, "explicit"):
                 config.validate(self.cfg, slug)
+
+    def test_evacuate_requires_persistent_root_volume(self):
+        self.cfg["scenarios"]["nova-evacuate"].update(
+            enabled=True, host="compute-test-01"
+        )
+        self.cfg["compute"]["boot_from_volume"] = False
+        with self.assertRaisesRegex(config.InvalidError, "boot_from_volume"):
+            config.validate(self.cfg, "nova-evacuate")
+
+    def test_evacuate_preflight_checks_dedicated_host_read_only(self):
+        self.cfg["scenarios"]["nova-evacuate"].update(
+            enabled=True, host="compute-test-01"
+        )
+        self.admin.require_version.return_value = "2.99"
+        self.cloud.require_version.return_value = "2.99"
+        with (
+            mock.patch.object(prepare, "resolve_base", return_value={}),
+            mock.patch.object(
+                prepare,
+                "host_service",
+                return_value={"state": "up", "status": "enabled"},
+            ),
+            mock.patch.object(
+                prepare, "exclusive_host", return_value=[]
+            ) as exclusive,
+        ):
+            info = prepare.preflight(
+                self.cfg, "nova-evacuate", self.admin, self.cloud
+            )
+        self.assertEqual("2.74", info["compute_version"])
+        exclusive.assert_called_once_with(self.admin, "compute-test-01")
+        self.admin.post.assert_not_called()
+        self.cloud.post.assert_not_called()
+
+    def test_fault_start_accepts_waiting_manual_nova_evacuation(self):
+        path = self.directory / "settings.yaml"
+        path.write_text(yaml.safe_dump(self.cfg))
+        ledger = Ledger(
+            cli.run_path(self.cfg, self.run_id),
+            {
+                "run_id": self.run_id,
+                "scenario": "nova-evacuate",
+                "status": "WAITING_FOR_FAULT",
+            },
+        )
+        with mock.patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(
+                0,
+                cli.main([
+                    "--config", str(path), "fault-start", self.run_id
+                ]),
+            )
+        marker = ledger.path.parent / "fault-start.json"
+        self.assertTrue(marker.exists())
+        self.assertIn("epoch", json.loads(marker.read_text()))
 
     def test_reject_unknown_keys_and_string_boolean(self):
         for value, expected in (
@@ -1127,6 +1185,157 @@ class TPMCloudInitTest(RunnerCase):
         )
         self.engine.migrate.assert_not_called()
         self.assertNotIn("tpm", self.ledger.data["evidence"])
+
+
+class NovaEvacuateTest(RunnerCase):
+    def setUp(self):
+        super().setUp()
+        self.cfg["scenarios"]["nova-evacuate"].update(
+            enabled=True, host="compute-test-01"
+        )
+        self.engine = self.engine()
+        self.engine.options = self.cfg["scenarios"]["nova-evacuate"]
+        self.ledger.data["config_path"] = "/etc/ultimum/ultimum.yaml"
+        self.ledger.save()
+        self.server = {"id": "evacuation-vm"}
+        self.old_guest = mock.Mock()
+        self.new_guest = mock.Mock()
+        self.new_guest.command.return_value = self.run_id
+        self.engine.vm = mock.Mock(
+            return_value=(
+                self.server,
+                {"id": "port"},
+                {"floating_ip_address": "192.0.2.2"},
+                self.old_guest,
+            )
+        )
+        self.engine.connect = mock.Mock(return_value=self.new_guest)
+        self.engine.target = mock.Mock(return_value=("compute-test-02", {}))
+        self.service = {"state": "up"}
+
+        def describe(server):
+            return {
+                "id": server["id"],
+                "status": "ACTIVE",
+                "OS-EXT-SRV-ATTR:host": (
+                    "compute-test-02"
+                    if self.admin.post.called
+                    else "compute-test-01"
+                ),
+            }
+
+        self.engine.describe = mock.Mock(side_effect=describe)
+
+    def execute(self, host_goes_down=True):
+        marker = self.ledger.path.parent / "fault-start.json"
+
+        def waiting(
+            fetch, ready, timeout, interval=2, description="operation"
+        ):
+            if description == "operator fencing confirmation":
+                self.assertEqual(
+                    "WAITING_FOR_FAULT", self.ledger.data["status"]
+                )
+                self.admin.post.assert_not_called()
+                marker.write_text(json.dumps({"epoch": time.time()}))
+            elif description == "fenced Nova compute service down":
+                self.admin.post.assert_not_called()
+                if not host_goes_down:
+                    raise TimeoutError("compute did not go down")
+                self.service["state"] = "down"
+            return wait_for(
+                fetch, ready, timeout, interval=0, description=description
+            )
+
+        with (
+            mock.patch(
+                "ultimum_validation.scenarios.exclusive_host",
+                return_value=[],
+            ) as exclusive,
+            mock.patch(
+                "ultimum_validation.scenarios.host_service",
+                return_value=self.service,
+            ),
+            mock.patch(
+                "ultimum_validation.scenarios.wait_for", side_effect=waiting
+            ),
+        ):
+            self.engine.nova_evacuate()
+        return exclusive
+
+    def test_sends_admin_evacuate_only_after_host_is_fenced_and_down(self):
+        exclusive = self.execute()
+        self.engine.vm.assert_called_once_with(
+            host="compute-test-01", label="evacuate"
+        )
+        self.old_guest.write.assert_called_once_with(
+            "/var/tmp/ultimum-evacuate", self.run_id
+        )
+        self.old_guest.command.assert_called_once_with("sync")
+        self.engine.target.assert_called_once_with(self.server)
+        self.admin.post.assert_called_once_with(
+            "compute", "/servers/evacuation-vm/action", {"evacuate": {}}
+        )
+        self.cloud.post.assert_not_called()
+        exclusive.assert_any_call(
+            self.admin, "compute-test-01", ["evacuation-vm"]
+        )
+        self.engine.connect.assert_called_once_with(
+            self.server, {"floating_ip_address": "192.0.2.2"}
+        )
+        self.new_guest.command.assert_called_once_with(
+            "cat /var/tmp/ultimum-evacuate"
+        )
+        self.assertEqual(
+            {
+                "source": "compute-test-01",
+                "targets": {"evacuation-vm": "compute-test-02"},
+                "data_preserved": True,
+            },
+            self.ledger.data["evidence"]["nova_evacuation"],
+        )
+
+    def test_refuses_evacuate_while_source_service_is_up(self):
+        with self.assertRaisesRegex(TimeoutError, "did not go down"):
+            self.execute(host_goes_down=False)
+        self.admin.post.assert_not_called()
+        self.engine.connect.assert_not_called()
+
+    def test_requires_destination_before_asking_for_host_outage(self):
+        self.engine.target.side_effect = config.InvalidError(
+            "No other host in the availability zone"
+        )
+        with self.assertRaisesRegex(config.InvalidError, "No other host"):
+            self.execute()
+        self.assertFalse(
+            (self.ledger.path.parent / "fault-start.json").exists()
+        )
+        self.admin.post.assert_not_called()
+
+    def test_detects_automatic_recovery_before_manual_evacuate(self):
+        calls = 0
+
+        def describe(server):
+            nonlocal calls
+            calls += 1
+            return {
+                "id": server["id"],
+                "status": "ACTIVE",
+                "OS-EXT-SRV-ATTR:host": (
+                    "compute-test-01" if calls == 1 else "compute-test-02"
+                ),
+            }
+
+        self.engine.describe.side_effect = describe
+        with self.assertRaisesRegex(config.InvalidError, "automatic HA"):
+            self.execute()
+        self.admin.post.assert_not_called()
+
+    def test_does_not_pass_when_evacuated_vm_loses_data(self):
+        self.new_guest.command.return_value = "different data"
+        with self.assertRaisesRegex(AssertionError, "lost"):
+            self.execute()
+        self.assertNotIn("nova_evacuation", self.ledger.data["evidence"])
 
 
 class ScenarioTest(RunnerCase):

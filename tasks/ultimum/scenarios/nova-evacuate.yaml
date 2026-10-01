@@ -1,0 +1,14 @@
+# One independent task, using the configured existing Rally user/project.
+---
+Ultimum.nova_evacuate:
+  - args:
+      config_path: {{ config_path | tojson }}
+      state_path: {{ state_path | tojson }}
+    runner:
+      type: serial
+      times: 1
+    context:
+      users: {}
+    sla:
+      failure_rate:
+        max: 0

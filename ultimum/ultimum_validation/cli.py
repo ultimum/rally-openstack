@@ -522,21 +522,28 @@ def main(argv=None):
                 print(json.dumps(ledger.data, indent=2))
             else:
                 if (
-                    ledger.data["scenario"] != "masakari-host-failure"
+                    ledger.data["scenario"] not in (
+                        "nova-evacuate", "masakari-host-failure"
+                    )
                     or ledger.data["status"] != "WAITING_FOR_FAULT"
                 ):
                     raise InvalidError(
-                        "Run is not waiting for a Masakari fault"
+                        "Run is not waiting for a host fault"
                     )
                 marker = ledger.path.parent / "fault-start.json"
                 with marker.open("x") as stream:
                     json.dump(
                         {"epoch": time.time(), "time": timestamp()}, stream
                     )
-                print(
-                    "Fault timer started. Hard power off the "
-                    "dedicated host now."
-                )
+                if ledger.data["scenario"] == "nova-evacuate":
+                    print(
+                        "Fault marker recorded; waiting for Nova service down"
+                    )
+                else:
+                    print(
+                        "Fault timer started. Hard power off the "
+                        "dedicated host now."
+                    )
             return 0
         if args.command == "check" and args.offline:
             # Only offline checks lack OpenRC. Online checks resolve TLS

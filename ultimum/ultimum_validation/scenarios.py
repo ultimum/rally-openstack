@@ -284,6 +284,113 @@ class Scenarios(Resources):
         finally:
             self.restore_services()
 
+    def nova_evacuate(self):
+        s = self.options
+        source = s["host"]
+        self.ledger.event(f"CHECK dedicated evacuation host: {source}")
+        exclusive_host(self.admin, source)
+        vms = [
+            self.vm(host=source, label="evacuate")
+            for _ in range(s["instance_count"])
+        ]
+        for server, _, _, guest in vms:
+            before = self.describe(server)
+            if before["OS-EXT-SRV-ATTR:host"] != source:
+                raise AssertionError("Evacuation test VM is on the wrong host")
+            # An available host in the same AZ is needed before fencing.
+            self.target(server)
+            guest.write("/var/tmp/ultimum-evacuate", self.run_id)
+            guest.command("sync")
+            guest.close()
+        owned = [server["id"] for server, _, _, _ in vms]
+        exclusive_host(self.admin, source, owned)
+        marker = self.ledger.path.parent / "fault-start.json"
+        self.ledger.update(status="WAITING_FOR_FAULT")
+        self.ledger.event(
+            f"READY: hard power off and fence dedicated host {source}; "
+            "after confirming it is off, run in another terminal: "
+            f"ultimum-rally --config {q(self.ledger.data['config_path'])} "
+            f"fault-start {self.run_id}"
+        )
+
+        def armed():
+            exclusive_host(self.admin, source, owned)
+            return marker.exists()
+
+        wait_for(
+            armed,
+            bool,
+            self.timeout,
+            description="operator fencing confirmation",
+        )
+        started = json.loads(marker.read_text())["epoch"]
+        deadline = started + s["recovery_timeout_seconds"]
+        self.ledger.update(status="RUNNING")
+        self.ledger.event(f"WAIT Nova compute service down: {source}")
+        wait_for(
+            lambda: host_service(self.admin, source)["state"] == "down",
+            bool,
+            max(0, deadline - time.time()),
+            description="fenced Nova compute service down",
+        )
+
+        for server, _, _, _ in vms:
+            before = self.describe(server)
+            if (
+                before["OS-EXT-SRV-ATTR:host"] != source
+                or before["status"] != "ACTIVE"
+                or before.get("OS-EXT-STS:task_state")
+            ):
+                raise InvalidError(
+                    "Test VM changed before manual evacuate; check "
+                    "automatic HA recovery on the dedicated host"
+                )
+        targets = {}
+        for server, _, floating, _ in vms:
+            with self.step(f"Nova evacuate VM {server['id']}"):
+                self.action(server, {"evacuate": {}}, self.admin)
+
+                def recovered():
+                    state = self.describe(server)
+                    if state["status"] == "ERROR":
+                        raise AssertionError(
+                            f"VM {server['id']} entered ERROR "
+                            "during evacuation"
+                        )
+                    return (
+                        state["status"] == "ACTIVE"
+                        and state["OS-EXT-SRV-ATTR:host"] != source
+                        and not state.get("OS-EXT-STS:task_state")
+                        and state
+                    )
+
+                after = wait_for(
+                    recovered,
+                    bool,
+                    max(0, deadline - time.time()),
+                    description=f"evacuated VM {server['id']} ACTIVE",
+                )
+                guest = self.connect(server, floating)
+                recorded = guest.command("cat /var/tmp/ultimum-evacuate")
+                if recorded != self.run_id:
+                    raise AssertionError(
+                        "Evacuated VM lost its persistent test data"
+                    )
+                targets[server["id"]] = after["OS-EXT-SRV-ATTR:host"]
+                if time.time() > deadline:
+                    raise AssertionError(
+                        "Nova evacuation including guest access exceeded "
+                        "the configured deadline"
+                    )
+        self.ledger.evidence(
+            "nova_evacuation",
+            {"source": source, "targets": targets, "data_preserved": True},
+        )
+        self.ledger.event(
+            "Nova evacuation verified. Keep the source host fenced until "
+            "run cleanup completes, then power it back on."
+        )
+
     def nova_cloud_init(self):
         s = self.options
         userdata = "#cloud-config\n" + yaml.safe_dump(

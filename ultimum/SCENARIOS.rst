@@ -254,7 +254,8 @@ only when the test runs.
 
 ``run`` includes an idempotent ``prepare``. ``run --all`` executes only scenarios
 with ``enabled: true``, sequentially; a missing TPM flavor or target AZ results
-in BLOCKED for that scenario. Drain and Masakari are disabled by default.
+in BLOCKED for that scenario. Drain, manual Nova evacuation and Masakari are
+disabled by default.
 ``execution.repetitions: N`` creates N separate tasks for each scenario.
 
 The admin OpenRC is sourced again for every command requiring cloud access.
@@ -666,7 +667,7 @@ Cinder backup/restore and the unspecified environment isolation test.
 API contracts and limitations:
 
 * `Nova API <https://docs.openstack.org/api-ref/compute/>`_: Count,
-  service UUIDs, requested destination, migrations and unshelve.
+  service UUIDs, requested destination, migrations, evacuation and unshelve.
 * `Cinder v3 API <https://docs.openstack.org/api-ref/block-storage/v3/>`_:
   revert >=3.40 and online extend >=3.42.
 * `OVN provider <https://docs.openstack.org/ovn-octavia-provider/latest/admin/driver.html>`_:
@@ -678,3 +679,53 @@ API contracts and limitations:
 
 Local tests use fake API and SSH implementations. Passing unit tests does not
 replace an integration run on a specific cloud with its policies and storage.
+
+.. scenario: nova-evacuate
+
+13. Nova - evacuate from a failed compute host
+----------------------------------------------
+
+This tests the Nova ``evacuate`` action directly. It requires a dedicated host,
+manual host fencing and ``compute.boot_from_volume: true`` so that the guest
+data check survives evacuation. Keep automatic Masakari recovery disabled on
+this host for the test; otherwise it may move the VMs before this scenario
+issues the Nova action. Run the Rally container outside the compute host that
+will be powered off.
+
+Add this section under the existing ``scenarios`` mapping in the mounted YAML::
+
+    nova-evacuate:
+      enabled: true
+      host: compute-test-01
+      instance_count: 1
+      require_exclusive_test_host: true
+      recovery_timeout_seconds: 600
+
+1. Run ``ultimum-rally check nova-evacuate``. The host must initially be up,
+   enabled and free of unrelated VMs. After creating the test VMs, the runner
+   also checks for another available host in their AZ before asking for the
+   outage. Placing a VM on the source requires the test user's Nova
+   ``requested_destination`` policy permission.
+2. Run ``ultimum-rally run nova-evacuate``. The runner creates volume-backed
+   VMs on the dedicated host, verifies their placement, writes persistent
+   data and prints the Ultimum run UUID. It enters ``WAITING_FOR_FAULT`` and
+   waits up to ``execution.api_timeout_seconds`` for the operator marker.
+3. Hard power off and fence the configured compute host. Only after confirming
+   it is off, use a second terminal to run::
+
+       ultimum-rally fault-start <run-uuid>
+
+   This records the operator's confirmation. The command does not power off
+   the host or change Nova's ``forced_down`` flag.
+4. The runner waits for the Nova compute service to report ``down`` and checks
+   that the VMs are still on the source. Then it sends the admin Nova
+   ``evacuate`` action for each run-owned VM, with no forced target; Nova's
+   scheduler selects a destination. It never evacuates unrelated VMs.
+5. It waits for the original VM IDs to become ACTIVE on other hosts, reconnects
+   over SSH and compares the persistent data. The configured recovery timeout
+   includes detection, evacuation and guest access. A VM already moved by HA
+   is reported as an error, not a passing manual evacuation.
+6. With the default ``execution.cleanup: on-success``, the runner removes its
+   evacuated VMs and volumes after a successful check. Keep the source host
+   fenced until cleanup completes, then power it back on. Failed runs retain
+   resources for inspection; use ``cleanup <run-uuid>`` to remove them.

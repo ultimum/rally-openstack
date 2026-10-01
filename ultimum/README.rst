@@ -122,6 +122,6 @@ creation/reuse decisions; scenarios print operations and check results live,
 with a waiting message during longer operations. An interactive TTY is not
 required for this output.
 See ``ultimum/SCENARIOS.rst`` for installation, commands, prerequisites and
-the exact steps executed by the runner and each of its twelve scenarios.
+the exact steps executed by the runner and each of its thirteen scenarios.
 These tasks live in ``tasks/ultimum/scenarios/``; they do not execute upstream
 ``rally-jobs`` or the older service validation wrappers.
