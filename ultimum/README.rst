@@ -21,3 +21,10 @@ the deployment name, which defaults to ``openstack``.
 The service validation task definitions and their wrappers are maintained in
 ``tasks/ultimum/`` and ``ultimum/``. Their configuration is documented in
 ``tasks/ultimum/README.rst``.
+
+The independent acceptance runner is ``ultimum-rally``. Mount its commented
+configuration at ``/etc/rally/ultimum.yaml`` and the SSH keys referenced there.
+See ``ultimum/SCENARIOS.rst`` for installation, commands, prerequisites and
+the exact steps executed by the runner and each of its twelve scenarios.
+These tasks live in ``tasks/ultimum/scenarios/``; they do not execute upstream
+``rally-jobs`` or the older service validation wrappers.

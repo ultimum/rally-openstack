@@ -8,7 +8,7 @@ ARG HTTPS_PROXY
 ARG GITHUB_TOKEN
 
 RUN apt update \
-    && apt install -y git curl python3-pip dumb-init vim qemu-utils
+    && apt install -y git curl python3-pip dumb-init vim qemu-utils iputils-ping
 
 RUN echo "cachebust=${CACHEBUST}" \
     && cd /opt  \
@@ -27,6 +27,12 @@ COPY tasks/ultimum/ /opt/rally-openstack/tasks/ultimum/
 COPY ultimum/rally-* /usr/local/bin/
 COPY ultimum/ultimum-* /usr/local/bin/
 COPY ultimum/rally.conf /etc/rally/
+COPY ultimum/ultimum_validation/*.py /opt/ultimum/ultimum_validation/
+COPY ultimum/plugins/*.py /opt/ultimum/plugins/
+COPY ultimum/ultimum.yaml.example ultimum/SCENARIOS.rst /opt/ultimum/
+COPY ultimum/runner-requirements.txt /opt/ultimum/runner-requirements.txt
+RUN pip3 install --break-system-packages -r /opt/ultimum/runner-requirements.txt -c /opt/upper-constraints.txt \
+    && install -m 0600 /opt/ultimum/ultimum.yaml.example /etc/rally/ultimum.yaml
 RUN chmod +x /usr/local/bin/rally-* /usr/local/bin/ultimum-*
 RUN echo 'source /usr/local/bin/rally-welcome' >> /root/.bashrc
 
