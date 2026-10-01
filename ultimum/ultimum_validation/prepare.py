@@ -11,9 +11,11 @@ from .external import allocate
 from .external import contains
 from .external import resolve_pool
 from .progress import progress
+from .tls import apply_tls
 
 
 def clouds(cfg, rc):
+    rc = apply_tls(cfg, rc)
     return (
         Cloud(session_from_rc(rc), rc),
         Cloud(session_from_rc(rc, cfg["identity"]), rc),

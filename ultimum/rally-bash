@@ -87,24 +87,20 @@ if [ -f "${OPENRC}" ]; then
     fi
 
 
-    #
-    # Check deployment only if it can be selected
-    #
-
-    if rally deployment use \
-        --deployment "${DEPLOYMENT_NAME}" >/dev/null 2>&1; then
-
-        if rally deployment check \
-            --deployment "${DEPLOYMENT_NAME}" >/tmp/rally-deployment-check.log 2>&1; then
-
-            write_status "[ OK ] OpenStack deployment check"
-        else
-            write_status "[WARN] OpenStack deployment check failed"
-        fi
-    fi
-
 else
     write_status "[WARN] OpenRC not found: ${OPENRC}"
+fi
+
+# Check the runner's current YAML/OpenRC, not the legacy deployment snapshot.
+auth_args=()
+if [ -n "${RALLY_OPENRC:-}" ]; then
+    auth_args+=(--openrc "${RALLY_OPENRC}")
+fi
+if ultimum-rally check-auth "${auth_args[@]}" >/tmp/rally-auth-check.log 2>&1; then
+    write_status "[ OK ] OpenStack authentication (runner configuration)"
+else
+    write_status "[WARN] OpenStack authentication failed"
+    write_status "       see /tmp/rally-auth-check.log; retry: ultimum-rally check-auth"
 fi
 
 
@@ -115,7 +111,7 @@ write_status "Useful commands:"
 write_status "  ultimum-rally prepare"
 write_status "  ultimum-rally run nova-cloud-init"
 write_status "  rally deployment list"
-write_status "  rally deployment check"
+write_status "  ultimum-rally check-auth"
 write_status "  rally task list"
 
 # Mark initialization as complete only after the full status is written.

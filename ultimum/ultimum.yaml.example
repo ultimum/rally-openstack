@@ -35,6 +35,15 @@ admin:
   # Reads OS_AUTH_URL, admin credentials, domains, region, endpoint and TLS.
   openrc: /etc/ultimum/admin.rc
 
+tls:
+  # Shared by admin, test user, Rally scenarios and startup authentication.
+  # null inherits OS_CACERT / OS_INSECURE from admin.openrc.
+  # With neither configured, certificates are verified using default CAs.
+  ca_cert: null              # Absolute CA bundle path INSIDE the container.
+  # ca_cert: "" explicitly selects default CAs instead of OpenRC's CA file.
+  insecure: null             # true disables verification; false enforces it.
+  # insecure=true ignores ca_cert, including a CA path inherited from OpenRC.
+
 identity:
   # The project and user persist between runs; cleanup does not delete them.
   project:

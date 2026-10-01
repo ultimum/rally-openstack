@@ -76,6 +76,43 @@ symlink at ``/etc/rally/rally.conf`` lets Rally find ``/etc/ultimum/rally.conf``
 ``RALLY_OPENRC`` changes the RC file location. ``RALLY_DEPLOYMENT_NAME`` changes
 the deployment name, which defaults to ``openstack``.
 
+Configure TLS in ``/etc/ultimum/ultimum.yaml``. For a private CA, mount its
+PEM CA bundle inside the container, for example at
+``/etc/ultimum/g2server-ca.pem``, and add::
+
+    tls:
+      ca_cert: /etc/ultimum/g2server-ca.pem
+      insecure: false
+
+To disable server certificate verification instead::
+
+    tls:
+      ca_cert: null
+      insecure: true
+
+These settings apply to admin and test-user API calls, Rally scenario
+environments and the startup authentication check. Explicit YAML values
+override ``OS_CACERT`` and ``OS_INSECURE`` in the admin OpenRC; null inherits
+each corresponding OpenRC value. With neither configured, TLS verification
+is enabled using the default CA bundle. ``ca_cert: ""`` explicitly selects
+default CAs. ``insecure: true`` ignores all CA paths. A CA used for verification
+must be an absolute, readable file path inside the container.
+
+Rebuild the image to install this feature; existing mounted YAML files are
+preserved, so add the settings to them explicitly. The runner reloads them
+on every invocation. Check authentication without creating cloud resources::
+
+    docker exec ultimum-rally ultimum-rally check-auth
+
+Startup uses this same check and writes its log to
+``/tmp/rally-auth-check.log``; the welcome banner shows the result from startup.
+It reads ``admin.openrc`` from YAML, unless ``RALLY_OPENRC`` overrides it for
+the startup check. The legacy ``openstack`` deployment remains available for
+older commands, with its original stored credentials/TLS settings. Raw
+``rally deployment check`` checks that stored snapshot, independently of the
+runner YAML. Runner scenario environments are selected automatically for the
+current credentials and TLS settings; old environments and results are kept.
+
 The service validation task definitions and their wrappers are maintained in
 ``tasks/ultimum/`` and ``ultimum/``. Their configuration is documented in
 ``tasks/ultimum/README.rst``.

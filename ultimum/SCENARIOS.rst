@@ -42,6 +42,26 @@ Ubuntu/systemd environment. Additional tools are python3, curl, e2fsprogs
 and, for TPM, tpm2-tools; ``guest.install_missing_packages`` permits their
 installation through apt.
 
+OpenStack TLS configuration
+---------------------------
+
+Set ``tls.ca_cert`` to the absolute path of a PEM CA bundle inside the
+container and ``tls.insecure: false`` to verify against a private CA. Set
+``tls.insecure: true`` to disable certificate verification; this ignores
+``tls.ca_cert`` and any inherited ``OS_CACERT``. Both values default to null,
+which inherits the corresponding ``OS_CACERT`` / ``OS_INSECURE`` value from
+``admin.openrc``. With no TLS settings, verification is enabled with default
+CAs. Explicit YAML values take precedence; ``ca_cert: ""`` selects default
+CAs instead of an inherited CA file.
+
+The same settings apply to the admin client, test-user client, Rally scenario
+environment and container startup authentication check. Run
+``ultimum-rally check-auth`` to verify the current configuration without
+preparing resources or requiring the test user to exist. Changes take effect
+on the next runner invocation. The legacy ``openstack`` deployment used by
+raw Rally commands retains its stored configuration. See ``ultimum/README.rst``
+for full YAML examples and container setup.
+
 Creating resources and using existing ones
 ------------------------------------------
 

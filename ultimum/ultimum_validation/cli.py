@@ -15,6 +15,7 @@ import uuid
 from .bootstrap import DEFAULT_CONFIG
 from .bootstrap import initialize
 from .cloud import APIError
+from .cloud import session_from_rc
 from .config import SCENARIOS
 from .config import InvalidError
 from .config import UnsupportedError
@@ -36,6 +37,7 @@ from .state import Ledger
 from .state import project_lock
 from .state import timestamp
 from .state import write_json
+from .tls import apply_tls
 
 
 def run_path(cfg, run_id):
@@ -77,6 +79,7 @@ def rally(cfg, *args, capture=True):
 def register_environment(cfg, rc, runtime):
     # Credentials go only in a private file / Rally DB, never argv or task
     # args.
+    rc = apply_tls(cfg, rc)
     identity = cfg["identity"]
     user = {
         "username": identity["user"]["name"],
@@ -472,6 +475,10 @@ def main(argv=None):
     check.add_argument(
         "--offline", action="store_true", help="Configuration validation only"
     )
+    auth = sub.add_parser(
+        "check-auth", help="Check admin authentication using configured TLS"
+    )
+    auth.add_argument("--openrc", help="Override admin.openrc for this check")
     sub.add_parser(
         "prepare",
         help=(
@@ -532,13 +539,31 @@ def main(argv=None):
                 )
             return 0
         if args.command == "check" and args.offline:
+            # Only offline checks lack OpenRC. Online checks resolve TLS
+            # after loading it, including an inherited insecure setting.
+            apply_tls(cfg, {})
             validate(cfg, args.scenario)
             print(
                 "Configuration valid (offline; cloud capabilities not checked)"
             )
             return 0
-        progress(f"LOAD admin OpenRC: {cfg['admin']['openrc']}", args.command)
-        rc = openrc(cfg["admin"]["openrc"])
+        rc_path = (
+            args.openrc if args.command == "check-auth" and args.openrc
+            else cfg["admin"]["openrc"]
+        )
+        progress(f"LOAD admin OpenRC: {rc_path}", args.command)
+        rc = apply_tls(cfg, openrc(rc_path))
+        if args.command == "check-auth":
+            if rc["OS_INSECURE"] == "true":
+                print("TLS certificate verification: disabled")
+            else:
+                print(
+                    "TLS certificate verification: "
+                    + (rc["OS_CACERT"] or "default CA bundle")
+                )
+            session_from_rc(rc).get_token()
+            print("OpenStack admin authentication OK")
+            return 0
         admin, cloud = clouds(cfg, rc)
         if args.command == "check":
             validate(cfg, args.scenario)
@@ -614,6 +639,14 @@ def main(argv=None):
     except Exception as exc:
         # Avoid credential-bearing authentication tracebacks in operator
         # output.
+        if type(exc).__name__ == "SSLError":
+            print(
+                "ERROR: TLS connection failed; check tls.ca_cert and "
+                "tls.insecure in the runner configuration and the "
+                "server certificate",
+                file=sys.stderr,
+            )
+            return 1
         print(
             "ERROR: "
             + type(exc).__name__

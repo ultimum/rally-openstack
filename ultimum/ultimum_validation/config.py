@@ -152,7 +152,12 @@ def load(path):
                 result[key] = merge(base[key], item, f"{prefix}{key}.")
             else:
                 expected = base[key]
-                if expected is None:
+                if prefix + key == "tls.insecure":
+                    if item is not None and type(item) is not bool:
+                        raise InvalidError(
+                            "tls.insecure must be a YAML boolean or null"
+                        )
+                elif expected is None:
                     if item is not None and not isinstance(item, str):
                         raise InvalidError(
                             f"{prefix}{key} must be a string or null"
