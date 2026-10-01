@@ -55,8 +55,6 @@ identity:
     password: CHANGE_ME
     # Keep the existing password; failed authentication stops preparation.
     update_existing_password: false
-    # For nova-drain with default Nova policy, use [member, admin].
-    # prepare assigns these roles in this project and leaves them assigned.
     roles: [member]
 
 rally:
@@ -103,7 +101,9 @@ compute:
   availability_zone: null
   boot_from_volume: true
   root_volume_size_gib: 10
-  # VMs and other project resources are always created by identity.user.
+  # Most VMs and project resources are created by identity.user. For
+  # nova-drain, the existing admin is scoped to the test project for
+  # host-directed VM creation; identity.user remains a project member.
   # Admin performs privileged migration; test_user checks the user's policy.
   # A 403 response never triggers an automatic fallback to admin.
   migration_actor: admin     # admin | test_user

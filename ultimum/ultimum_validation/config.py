@@ -253,6 +253,13 @@ def validate(cfg, scenario=None):
                 raise InvalidError(f"Set identity.{section}.{key}")
     if not user["roles"] or not isinstance(user["roles"], list):
         raise InvalidError("identity.user.roles must be a nonempty list")
+    if (
+        cfg["scenarios"]["nova-drain"]["enabled"]
+        and "admin" in user["roles"]
+    ):
+        raise InvalidError(
+            "nova-drain must not grant the admin role to identity.user"
+        )
     net = cfg["network"]
     if not net["external_network"]:
         raise InvalidError("Set network.external_network (name or UUID)")

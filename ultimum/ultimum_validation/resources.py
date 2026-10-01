@@ -279,13 +279,16 @@ class Resources:
         group=None,
         count=1,
         label="vm",
+        creator=None,
+        inject_keypair=True,
     ):
+        if creator is not None and creator.project_id != self.cloud.project_id:
+            raise InvalidError("VM creator is scoped to another project")
         self.access()
         compute = self.cfg["compute"]
         values = {
             "name": self.name(label),
             "flavorRef": flavor or self.runtime["flavor_id"],
-            "key_name": self.keypair,
             "metadata": {"ultimum_run_id": self.run_id},
             "config_drive": False,
             "networks": [{"port": port["id"]}]
@@ -295,6 +298,8 @@ class Resources:
             "min_count": count,
             "max_count": count,
         }
+        if inject_keypair:
+            values["key_name"] = self.keypair
         selected_az = az or compute["availability_zone"]
         if selected_az:
             values["availability_zone"] = selected_az
@@ -330,7 +335,7 @@ class Resources:
         if count > 1:
             values["return_reservation_id"] = True
         self.ledger.event(f"CREATE VM: {values['name']}, Count={count}")
-        response = self.cloud.post("compute", "/servers", body)
+        response = (creator or self.cloud).post("compute", "/servers", body)
         if count > 1:
             reservation = response["reservation_id"]
             self.ledger.event(f"Nova Count={count}, reservation={reservation}")

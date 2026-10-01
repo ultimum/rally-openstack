@@ -22,6 +22,33 @@ def clouds(cfg, rc):
     )
 
 
+def project_scoped_admin(admin, project_id):
+    """Authenticate the existing administrator in the test project."""
+    rc = dict(admin.rc)
+    for key in (
+        "OS_PROJECT_NAME",
+        "OS_PROJECT_DOMAIN_NAME",
+        "OS_PROJECT_DOMAIN_ID",
+    ):
+        rc.pop(key, None)
+    rc["OS_PROJECT_ID"] = project_id
+    cloud = Cloud(session_from_rc(rc), rc)
+    cloud.versions = dict(admin.versions)
+    try:
+        access = cloud.session.auth.get_access(cloud.session)
+    except Exception as exc:
+        raise InvalidError(
+            "Admin OpenRC user needs an admin role assignment in the "
+            "configured test project to place drain VMs"
+        ) from exc
+    if cloud.project_id != project_id or "admin" not in access.role_names:
+        raise InvalidError(
+            "Admin OpenRC user needs an admin role in the configured "
+            "test project to place drain VMs"
+        )
+    return cloud
+
+
 def ensure_identity(cfg, admin):
     identities = cfg["identity"]
     progress("CHECK Keystone domains for the configured project and user")
@@ -523,6 +550,14 @@ def preflight(cfg, scenario, admin, cloud):
                 "Dedicated host must initially be up and enabled"
             )
         exclusive_host(admin, s["host"])
+        if scenario == "nova-drain":
+            roles = cloud.session.auth.get_access(cloud.session).role_names
+            if "admin" in roles:
+                raise InvalidError(
+                    "Configured test user has the admin role; revoke it "
+                    "before running nova-drain"
+                )
+            project_scoped_admin(admin, cloud.project_id)
         if scenario == "masakari-host-failure":
             segment = unique(
                 admin.list("ha", "/segments", "segments"),

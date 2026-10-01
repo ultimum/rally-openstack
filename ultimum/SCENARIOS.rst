@@ -473,13 +473,19 @@ is not converted to PASS. Regular TPM evacuation is outside the Masakari test.
 1. Requires enabled=true, a specific host, an up/enabled compute service
    and no existing unrelated VMs on the host across any project.
 2. Creates ten active VMs by default in the configured test project,
-   requesting the selected host and its availability zone. **The test user must
-   have requested_destination policy permission**. If the cloud uses Nova's
-   default admin-only policy, set ``identity.user.roles: [member, admin]``
-   before preparation; the administrative OpenRC assigns that role within
-   the configured test project. VM creation still uses the project-scoped
-   test user, so ownership stays in that project. The role assignment
-   persists after the test. Verifies actual host/AZ.
+   requesting the selected host and its availability zone. The runner obtains
+   a token for the **existing admin OpenRC user scoped to the configured test
+   project** and uses it only for host-directed Nova server creation. This
+   admin user must already have the ``admin`` role assigned in that project;
+   the runner does not grant a new role. An operator can assign it with
+   ``openstack role add --user ADMIN --project TEST_PROJECT admin``. Test-user
+   ports and boot volumes stay in that project. Cloud-init installs the test
+   SSH public key because Nova keypairs belong to a user; these VMs have no
+   Nova keypair. The configured test user can remain ``member``. Verifies actual
+   host/AZ and project ownership. If the test user already has an ``admin``
+   role assignment, the scenario stops before creating resources; remove that
+   assignment in Keystone first. Removing ``admin`` from the YAML alone does
+   not revoke a role that ``prepare`` assigned earlier.
 3. Optionally creates ``stopped_instances`` (default zero), writes a
    verification file over SSH, stops each VM and waits for SHUTOFF. Prepares
    floating IPs and SSH for all active VMs.

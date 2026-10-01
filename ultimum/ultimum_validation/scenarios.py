@@ -17,6 +17,7 @@ from .guest import Continuity
 from .guest import q
 from .prepare import exclusive_host
 from .prepare import host_service
+from .prepare import project_scoped_admin
 from .resources import Resources
 
 
@@ -190,6 +191,14 @@ class Scenarios(Resources):
 
     def nova_drain(self):
         s = self.options
+        user_roles = self.cloud.session.auth.get_access(
+            self.cloud.session
+        ).role_names
+        if "admin" in user_roles:
+            raise InvalidError(
+                "Configured test user has the admin role; revoke it before "
+                "running nova-drain"
+            )
         self.ledger.event(f"CHECK dedicated drain host: {s['host']}")
         exclusive_host(self.admin, s["host"])
         source_az = host_service(self.admin, s["host"]).get("zone")
@@ -209,12 +218,39 @@ class Scenarios(Resources):
             for host, services in hosts.items()
         ):
             raise InvalidError("No other enabled/up compute in drain host AZ")
+        placement_admin = project_scoped_admin(
+            self.admin, self.cloud.project_id
+        )
+        public_key = pathlib.Path(self.cfg["guest"]["ssh_public_key"])
+        userdata = "#cloud-config\n" + yaml.safe_dump(
+            {
+                "user": {
+                    "name": self.cfg["guest"]["ssh_username"],
+                    "ssh_authorized_keys": [public_key.read_text().strip()],
+                    "sudo": "ALL=(ALL) NOPASSWD:ALL",
+                }
+            }
+        )
         active_vms = [
-            self.vm(host=s["host"], az=source_az, label="drain-active")
+            self.vm(
+                host=s["host"],
+                az=source_az,
+                label="drain-active",
+                creator=placement_admin,
+                inject_keypair=False,
+                userdata=userdata,
+            )
             for _ in range(s["active_instances"])
         ]
         stopped_vms = [
-            self.vm(host=s["host"], az=source_az, label="drain-stopped")
+            self.vm(
+                host=s["host"],
+                az=source_az,
+                label="drain-stopped",
+                creator=placement_admin,
+                inject_keypair=False,
+                userdata=userdata,
+            )
             for _ in range(s["stopped_instances"])
         ]
         active = [vm[0] for vm in active_vms]
@@ -240,6 +276,10 @@ class Scenarios(Resources):
                 raise AssertionError(
                     "Requested placement did not land on the host and AZ"
                 )
+            if placement.get("tenant_id", placement.get("project_id")) != (
+                self.cloud.project_id
+            ):
+                raise AssertionError("Drain VM belongs to another project")
         exclusive_host(
             self.admin, s["host"], [vm["id"] for vm in active + stopped]
         )

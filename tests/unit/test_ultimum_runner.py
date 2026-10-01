@@ -59,6 +59,7 @@ class RunnerCase(unittest.TestCase):
         )
         self.admin = mock.Mock()
         self.cloud = mock.Mock(project_id="test-project")
+        self.cloud.session.auth.get_access.return_value.role_names = ["member"]
         self.cloud.list.return_value = []
         self.cloud.absent.return_value = True
         self.runtime = dict(
@@ -97,6 +98,30 @@ class ConfigTest(RunnerCase):
             self.load_values(
                 {"scenarios": {"nova-drain": {"max_parallel_migrations": 2}}}
             )
+
+    def test_drain_never_grants_admin_role_to_test_user(self):
+        self.cfg["scenarios"]["nova-drain"]["enabled"] = True
+        self.cfg["identity"]["user"]["roles"] = ["member", "admin"]
+        with self.assertRaisesRegex(config.InvalidError, "must not grant"):
+            config.validate(self.cfg)
+
+    def test_drain_preflight_checks_project_scoped_admin_read_only(self):
+        self.cfg["scenarios"]["nova-drain"].update(
+            enabled=True, host="host1"
+        )
+        with (
+            mock.patch.object(prepare, "resolve_base", return_value={}),
+            mock.patch.object(
+                prepare,
+                "host_service",
+                return_value={"state": "up", "status": "enabled"},
+            ),
+            mock.patch.object(prepare, "exclusive_host", return_value=[]),
+            mock.patch.object(prepare, "project_scoped_admin") as scoped,
+        ):
+            prepare.preflight(self.cfg, "nova-drain", self.admin, self.cloud)
+        scoped.assert_called_once_with(self.admin, "test-project")
+        self.admin.request.assert_not_called()
 
     def test_creation_flags_require_explicit_existing_references(self):
         for kind in (
@@ -448,6 +473,9 @@ class StateAndCleanupTest(RunnerCase):
 
     def test_drain_submits_all_ten_live_migrations_before_waiting(self):
         engine = self.engine()
+        self.cloud.session.auth.get_access.return_value.role_names = [
+            "member"
+        ]
         engine.options = dict(
             self.cfg["scenarios"]["nova-drain"], host="host1"
         )
@@ -464,6 +492,7 @@ class StateAndCleanupTest(RunnerCase):
             return_value={
                 "OS-EXT-SRV-ATTR:host": "host1",
                 "OS-EXT-AZ:availability_zone": "az1",
+                "tenant_id": "test-project",
             }
         )
         engine.save_service = mock.Mock()
@@ -504,6 +533,10 @@ class StateAndCleanupTest(RunnerCase):
                 "ultimum_validation.scenarios.host_service",
                 return_value={"id": "service", "zone": "az1"},
             ),
+            mock.patch(
+                "ultimum_validation.scenarios.project_scoped_admin",
+                return_value=mock.Mock(project_id="test-project"),
+            ),
             mock.patch("ultimum_validation.scenarios.Continuity") as probe,
         ):
             engine.nova_drain()
@@ -511,6 +544,8 @@ class StateAndCleanupTest(RunnerCase):
         for call in engine.vm.call_args_list:
             self.assertEqual("host1", call.kwargs["host"])
             self.assertEqual("az1", call.kwargs["az"])
+            self.assertFalse(call.kwargs["inject_keypair"])
+            self.assertIn("ssh_authorized_keys", call.kwargs["userdata"])
         self.assertEqual(10, probe.call_count)
         self.assertEqual(
             [("request", vm["id"]) for vm in vms]
@@ -550,6 +585,9 @@ class StateAndCleanupTest(RunnerCase):
 
     def test_drain_requires_an_enabled_target_in_the_source_az(self):
         engine = self.engine()
+        self.cloud.session.auth.get_access.return_value.role_names = [
+            "member"
+        ]
         engine.options = dict(
             self.cfg["scenarios"]["nova-drain"], host="host1"
         )
@@ -573,6 +611,86 @@ class StateAndCleanupTest(RunnerCase):
             with self.assertRaisesRegex(config.InvalidError, "No other"):
                 engine.nova_drain()
         engine.vm.assert_not_called()
+
+    def test_drain_admin_token_uses_test_project_without_elevating_user(self):
+        self.admin.rc = {
+            "OS_AUTH_URL": "https://identity.example/v3",
+            "OS_USERNAME": "operator",
+            "OS_PASSWORD": "test-password",
+            "OS_PROJECT_NAME": "admin-project",
+            "OS_PROJECT_DOMAIN_NAME": "Default",
+        }
+        self.admin.versions = {"compute": "2.74"}
+        scoped = mock.Mock(project_id="test-project")
+        scoped.session.auth.get_access.return_value.role_names = ["admin"]
+        with (
+            mock.patch(
+                "ultimum_validation.prepare.session_from_rc",
+                return_value=mock.Mock(),
+            ) as session,
+            mock.patch(
+                "ultimum_validation.prepare.Cloud", return_value=scoped
+            ),
+        ):
+            self.assertIs(
+                scoped,
+                prepare.project_scoped_admin(self.admin, "test-project"),
+            )
+        rc = session.call_args.args[0]
+        self.assertEqual("test-project", rc["OS_PROJECT_ID"])
+        self.assertNotIn("OS_PROJECT_NAME", rc)
+        self.assertEqual("admin-project", self.admin.rc["OS_PROJECT_NAME"])
+        self.assertEqual(["member"], self.cfg["identity"]["user"]["roles"])
+        self.assertEqual({"compute": "2.74"}, scoped.versions)
+
+    def test_drain_admin_requires_role_in_test_project(self):
+        self.admin.rc = {"OS_AUTH_URL": "https://identity.example/v3"}
+        self.admin.versions = {}
+        scoped = mock.Mock(project_id="test-project")
+        scoped.session.auth.get_access.return_value.role_names = ["member"]
+        with (
+            mock.patch(
+                "ultimum_validation.prepare.session_from_rc",
+                return_value=mock.Mock(),
+            ),
+            mock.patch(
+                "ultimum_validation.prepare.Cloud", return_value=scoped
+            ),
+        ):
+            with self.assertRaisesRegex(config.InvalidError, "admin role"):
+                prepare.project_scoped_admin(self.admin, "test-project")
+
+    def test_drain_rejects_existing_test_user_admin_role(self):
+        engine = self.engine()
+        engine.options = dict(
+            self.cfg["scenarios"]["nova-drain"], host="host1"
+        )
+        self.cloud.session.auth.get_access.return_value.role_names = ["admin"]
+        with self.assertRaisesRegex(config.InvalidError, "revoke it"):
+            engine.nova_drain()
+        self.admin.request.assert_not_called()
+
+    def test_host_directed_server_uses_project_admin_without_keypair(self):
+        engine = self.engine()
+        engine.access = mock.Mock()
+        self.cfg["compute"]["boot_from_volume"] = False
+        creator = mock.Mock(project_id="test-project")
+        creator.post.return_value = {"server": {"id": "drain-vm"}}
+        self.cloud.wait_status.return_value = {
+            "id": "drain-vm", "status": "ACTIVE"
+        }
+        engine.server(
+            host="host1", creator=creator, inject_keypair=False
+        )
+        body = creator.post.call_args.args[2]["server"]
+        self.assertEqual("host1", body["host"])
+        self.assertNotIn("key_name", body)
+        self.cloud.post.assert_not_called()
+        engine.access.reset_mock()
+        creator.project_id = "another-project"
+        with self.assertRaisesRegex(config.InvalidError, "another project"):
+            engine.server(host="host1", creator=creator)
+        engine.access.assert_not_called()
 
     def test_reconciliation_failure_still_restores_host_service(self):
         engine = self.engine()
