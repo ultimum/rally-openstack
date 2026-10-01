@@ -6,6 +6,7 @@ import io
 import json
 import pathlib
 import selectors
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -20,6 +21,7 @@ import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "ultimum"))
+from ultimum_validation import bootstrap  # noqa: E402
 from ultimum_validation import cli  # noqa: E402
 from ultimum_validation import config  # noqa: E402
 from ultimum_validation import keys  # noqa: E402
@@ -780,6 +782,50 @@ class SSHKeyTest(RunnerCase):
         engine.cleanup()
         self.cloud.post.assert_not_called()
         self.cloud.delete.assert_not_called()
+
+
+class BootstrapTest(RunnerCase):
+    def test_layout_creation_preserves_existing_config_and_keys(self):
+        config_path = self.directory / "etc/ultimum/ultimum.yaml"
+        data = self.directory / "data/ultimum"
+        bootstrap.initialize(config_path, data)
+        config_path.write_text("customized: configuration\n")
+        (data / "keys/existing").write_text("untouched")
+        bootstrap.initialize(config_path, data)
+        self.assertEqual(
+            "customized: configuration\n", config_path.read_text()
+        )
+        self.assertEqual("untouched", (data / "keys/existing").read_text())
+        self.assertEqual(0o600, config_path.stat().st_mode & 0o777)
+        for name in ("home", "keys", "db", "state", "results"):
+            self.assertTrue((data / name).is_dir())
+
+    def test_database_copied_once_preserving_old_and_new_history(self):
+        old = self.directory / "old.sqlite"
+        with contextlib.closing(sqlite3.connect(old)) as conn:
+            conn.execute("CREATE TABLE history (value TEXT)")
+            conn.execute("INSERT INTO history VALUES ('old-task')")
+            conn.commit()
+        path = self.directory / "etc/ultimum.yaml"
+        data = self.directory / "data"
+        bootstrap.initialize(path, data, old)
+        target = data / "db/rally.sqlite"
+        with contextlib.closing(sqlite3.connect(target)) as conn:
+            self.assertEqual(
+                [("old-task",)],
+                conn.execute("SELECT * FROM history").fetchall(),
+            )
+            conn.execute("INSERT INTO history VALUES ('new-task')")
+            conn.commit()
+        bootstrap.initialize(path, data, old)
+        with contextlib.closing(sqlite3.connect(target)) as conn:
+            self.assertEqual(
+                2, conn.execute("SELECT COUNT(*) FROM history").fetchone()[0]
+            )
+        with contextlib.closing(sqlite3.connect(old)) as conn:
+            self.assertEqual(
+                1, conn.execute("SELECT COUNT(*) FROM history").fetchone()[0]
+            )
 
 
 class ProgressTest(RunnerCase):

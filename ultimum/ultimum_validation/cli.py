@@ -12,6 +12,8 @@ import sys
 import time
 import uuid
 
+from .bootstrap import DEFAULT_CONFIG
+from .bootstrap import initialize
 from .cloud import APIError
 from .config import SCENARIOS
 from .config import InvalidError
@@ -449,8 +451,11 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Ultimum project-scoped Rally acceptance runner"
     )
-    parser.add_argument("--config", default="/etc/rally/ultimum.yaml")
+    parser.add_argument("--config", default=DEFAULT_CONFIG)
     sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser(
+        "init", help="Initialize local directories and configuration"
+    )
     sub.add_parser("list", help="List independent scenarios")
     explain = sub.add_parser(
         "explain", help="Print documented runner/scenario steps"
@@ -485,6 +490,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     os.umask(0o077)
     try:
+        if args.command == "init":
+            initialize(args.config, legacy_db="/data/db/rally.sqlite")
+            return 0
         if args.command in ("list", "explain"):
             if args.command == "list":
                 print("\n".join(SCENARIOS))

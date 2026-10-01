@@ -10,17 +10,28 @@ Installation and first run
 --------------------------
 
 Building with ``ultimum/Dockerfile`` installs the runner, plugins, ping and
-Python dependencies. The default configuration is a copy of
-``ultimum/ultimum.yaml.example`` at ``/etc/rally/ultimum.yaml``, with comments
-for every option. The four existing service verification wrappers remain
-separate.
+Python dependencies. Container startup runs ``ultimum-rally init`` to create
+missing directories and copy ``ultimum/ultimum.yaml.example`` to
+``/etc/ultimum/ultimum.yaml``, with comments for every option. Existing
+configuration is preserved. The four existing service verification wrappers
+remain separate.
 
-Mount the following into the container:
+Mount persistent directories at ``/data`` and ``/etc/ultimum``. The launch
+command in ``ultimum/README.rst`` uses Docker ``-v``, which creates missing
+host directories; no ``RALLY_RUN_DIR`` or manual ``mkdir`` is needed. After
+startup:
 
-* the admin OpenRC at ``/etc/rally/admin.rc``;
-* your customized YAML at ``/etc/rally/ultimum.yaml`` with permissions 0600;
-* the SSH private and public keys at the paths specified in the YAML;
-* persistent ``/data`` storage for the Rally database, state and results.
+* fill in ``/etc/ultimum/ultimum.yaml`` (created with permissions 0600);
+* save the admin OpenRC as ``/etc/ultimum/admin.rc`` with permissions 0600;
+* run ``ultimum-rally prepare`` to generate/reuse the SSH key and cloud setup.
+
+Home, keys, database, state and results are under ``/data/ultimum``. The
+container's ``HOME`` and working directory are ``/data/ultimum/home``. The Rally
+database is ``/data/ultimum/db/rally.sqlite``. If only the old
+``/data/db/rally.sqlite`` exists, startup copies it once without modifying the
+old database. Stop the old container before switching; new changes belong in
+the new database. ``/etc/ultimum/rally.conf`` is discovered by Rally through
+the compatibility symlink ``/etc/rally/rally.conf``.
 
 Set the test user's password, image, flavor, external network and
 ``probe_source_cidr``. The latter is the actual source IP/CIDR that Neutron
@@ -68,7 +79,8 @@ Example for an existing project, user and connected network with a router
         name: ultimumrouter
 
 With ``create_*=true``, ``name`` can remain null. The prefix generates
-``e2e-project``, ``e2e-user``, ``e2e-net``, ``e2e-subnet`` and ``e2e-router``.
+``e2e-project``, ``e2e-user``, ``e2e-net``, ``e2e-subnet``, ``e2e-router``
+and ``e2e-key``.
 Explicit names are not changed by the prefix. Test VMs and other run resources
 receive names such as ``e2e-<run-uuid>-...``. With false, a missing name is not
 replaced by a default; the runner fails while loading the configuration.
@@ -85,6 +97,44 @@ The original ``identity.*.create_if_missing``, ``network.mode`` and
 ``execution.resource_prefix`` settings remain supported as aliases. Supplying
 both the old and new options with different values makes the configuration
 invalid.
+
+Persistent SSH key
+------------------
+
+The same creation convention applies to the key::
+
+    resources_prefix: e2e
+    create_ssh_key: true
+    ssh_key:
+      name: null                # Generates e2e-key; or set an explicit name.
+      directory: /data/ultimum/keys
+    guest:
+      ssh_private_key: null     # /data/ultimum/keys/e2e-key
+      ssh_public_key: null      # /data/ultimum/keys/e2e-key.pub
+
+``prepare`` generates a missing RSA 3072-bit private key with mode 0600 and
+its public key. It imports the public key into a Nova keypair named
+``ssh_key.name``, scoped to the configured test user. Repeated preparation
+reuses the same local files and checks that the Nova keypair matches. Keys
+and the Nova keypair persist across runs and are excluded from run cleanup.
+
+To use existing keys, set ``create_ssh_key: false`` and an explicit
+``ssh_key.name``. The files must already exist at the derived paths, or set
+absolute ``guest.ssh_private_key`` and ``guest.ssh_public_key`` paths. If only
+the private path is specified, the public path is that path plus ``.pub``.
+The Nova keypair must already exist for the test user, not just the admin.
+Mounted existing keys can be read-only. RSA, Ed25519 and ECDSA private keys
+without a passphrase are supported; restrict private key permissions to 0600
+or 0400.
+
+Existing matching material is accepted with either flag value. A different
+public key under the same Nova name, or mismatched local files, stops the
+operation without replacing anything. With creation enabled, a missing
+``.pub`` is derived from the existing private key. An existing public key
+without its private part cannot be recovered: provide the matching private
+key or choose a new name. ``check --offline`` allows missing files when
+creation is enabled; cloud ``check`` requires keys already prepared and never
+generates or imports them.
 
 Running the suite
 -----------------
@@ -105,7 +155,7 @@ Examples::
 
 Specify an alternative YAML file before the subcommand::
 
-    ultimum-rally --config /etc/rally/lab.yaml run placement
+    ultimum-rally --config /etc/ultimum/lab.yaml run placement
 
 ``check --offline`` validates configuration and local files without contacting
 OpenStack. ``check`` also verifies test-user authentication, API microversions
@@ -135,6 +185,16 @@ Rally report exports. State and the Rally log are stored in
 arguments; the test user's credentials are stored in the Rally database.
 Protect the configuration, database and state directory.
 
+``prepare`` reports each lookup, creation, reuse, role assignment, quota
+decision and connection check. Scenarios print timestamped operations,
+resource IDs, VM readiness, SSH connection and cloud-init progress, check
+results and cleanup. Long operations emit a waiting message approximately
+every 15 seconds while preparation/the scenario/cleanup is active. Output is
+flushed immediately, including with ``docker exec`` without ``-t``. Steps are
+also recorded in ``result.json``; the Rally worker's output is retained in
+``state/runs/<run-uuid>/rally.log``. Private keys, passwords and API request
+bodies are not printed in progress messages.
+
 PASS means the scenario checks passed; FAIL indicates an unmet expectation
 or failed operation; BLOCKED means missing configuration or prerequisites;
 UNSUPPORTED indicates a detected missing API capability. A failed backend
@@ -155,7 +215,8 @@ Cleanup operates only on resources recorded for a specific run, verifies the
 cloud and project, and is repeatable. Before creating a resource, it saves an
 ownership marker so it can find the resource if the response is lost. It also
 finds boot volumes for servers created through Count. It does not delete the
-project, user or shared network/subnet/router created by prepare. Following an
+project, user, prepared SSH keypair or shared network/subnet/router created by
+prepare. Following an
 ambiguous interruption while an API request is still being processed, cleanup
 may need to be repeated once the cloud has settled. An abrupt SIGKILL or loss
 of a node or storage cannot be handled as an atomic transaction with the cloud.
@@ -190,7 +251,10 @@ Runner steps
    that the test user can authenticate into the correct project.
 5. With ``quotas.apply: true``, sets only the listed Nova/Cinder/Neutron/Octavia
    quotas. Currently apply=false; numeric defaults still need to be supplied.
-6. Uses the test user to resolve the image, flavor and external network by
+6. Prepares the persistent local SSH key and the test user's Nova keypair,
+   honoring create_ssh_key and ssh_key.name. Prints whether each part is being
+   created or reused and verifies matching key material. Uses the test user
+   to resolve the image, flavor and external network by
    unique name or UUID. Verifies that the network has the external flag.
 7. With create_network/create_subnet=true, creates or reuses its own network
    and subnet using the YAML CIDR, internal gateway, DHCP, allocation pool
@@ -214,8 +278,9 @@ Runner steps
 12. The plugin creates VMs, ports, volumes and other project resources as the
     test user. Admin reads host/AZ details and performs migrations according
     to ``migration_actor``; a 403 for test_user does not trigger admin fallback.
-13. Imports the public SSH key into its own keypair and creates its own SG
-    allowing SSH and ICMP from the source CIDR. Each VM uses run-owned resources.
+13. Uses the SSH keypair already checked by prepare and creates its own SG
+    allowing SSH and ICMP from the source CIDR. VMs use the persistent keypair
+    alongside run-owned ports, volumes and security groups.
     The first SSH connection saves the new VM's host key in state; subsequent
     connections compare it.
 14. Records API and guest check results, exports the Rally report and cleans
@@ -228,8 +293,8 @@ Runner steps
 
 1. Reads batch_sizes, submission_modes, the optional AZ, group_policy,
    allowed_hosts and the separate anti-affinity test's instance count.
-2. Creates a keypair and SG; the runner has already prepared the network
-   and router.
+2. Uses the prepared SSH keypair and creates an SG; the runner has already
+   prepared the network and router.
 3. In serial mode, sends a Nova create request with min_count=max_count for
    each batch. Waits for all VMs to become ACTIVE and reads their hosts from
    the admin API.

@@ -1,5 +1,5 @@
 # Ultimum acceptance runner - annotated configuration.
-# Location: /etc/rally/ultimum.yaml, permissions 0600.
+# Location: /etc/ultimum/ultimum.yaml, permissions 0600.
 # null means automatic selection only where explicitly documented.
 # Image/flavor/network values are examples; adjust them before running.
 schema_version: 1
@@ -33,7 +33,7 @@ ssh_key:
 admin:
   # The runner sources this trusted shell file on each invocation.
   # Reads OS_AUTH_URL, admin credentials, domains, region, endpoint and TLS.
-  openrc: /etc/rally/admin.rc
+  openrc: /etc/ultimum/admin.rc
 
 identity:
   # The project and user persist between runs; cleanup does not delete them.
