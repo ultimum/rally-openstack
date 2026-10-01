@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+
+STATUS_FILE="/run/rally-status"
+READY_FILE="/run/rally-ready"
+
+# Wait up to 30 seconds for container initialization to finish.
+wait_count=0
+while [ ! -f "${READY_FILE}" ] && [ "${wait_count}" -lt 300 ]; do
+    sleep 0.1
+    wait_count=$((wait_count + 1))
+done
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+echo
+
+if [ ! -f "${READY_FILE}" ]; then
+    printf "${YELLOW}Rally initialization is still in progress...${RESET}\n\n"
+fi
+
+if [ -f "${STATUS_FILE}" ]; then
+    while IFS= read -r line; do
+        case "${line}" in
+            "[ OK ]"*)
+                printf "${GREEN}%s${RESET}\n" "${line}"
+                ;;
+            "[FAIL]"*)
+                printf "${RED}${BOLD}%s${RESET}\n" "${line}"
+                ;;
+            "[WARN]"*)
+                printf "${YELLOW}%s${RESET}\n" "${line}"
+                ;;
+            "Rally container status")
+                printf "${CYAN}${BOLD}%s${RESET}\n" "${line}"
+                ;;
+            *)
+                printf "%s\n" "${line}"
+                ;;
+        esac
+    done < "${STATUS_FILE}"
+else
+    printf "${RED}${BOLD}[FAIL] Rally status file is not available${RESET}\n"
+fi
+
+echo

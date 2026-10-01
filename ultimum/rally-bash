@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+
+DEPLOYMENT_NAME="${RALLY_DEPLOYMENT_NAME:-openstack}"
+OPENRC="${RALLY_OPENRC:-/etc/rally/admin.rc}"
+STATUS_FILE="/run/rally-status"
+READY_FILE="/run/rally-ready"
+
+catch_term() {
+    exit 0
+}
+
+catch_quit() {
+    exit 0
+}
+
+trap catch_term SIGTERM
+trap catch_quit SIGQUIT
+
+
+write_status() {
+    echo "$1" >> "${STATUS_FILE}"
+}
+
+
+rm -f "${READY_FILE}"
+: > "${STATUS_FILE}"
+
+write_status "Rally container status"
+write_status "======================"
+
+
+#
+# Data volume and database
+#
+
+if [ -d /data ]; then
+    write_status "[ OK ] Data volume mounted at /data"
+
+    if mkdir -p /data/db >/tmp/rally-data.log 2>&1; then
+        write_status "[ OK ] Rally data directories"
+
+        if rally db ensure >/tmp/rally-db.log 2>&1; then
+            write_status "[ OK ] Rally database"
+        else
+            write_status "[FAIL] Rally database"
+            write_status "       rally db ensure failed"
+        fi
+    else
+        write_status "[FAIL] Rally data directories"
+        write_status "       unable to create /data/db"
+    fi
+else
+    write_status "[FAIL] Data volume"
+    write_status "       missing volume mount at /data"
+    write_status "       mount persistent storage to /data"
+fi
+
+
+#
+# OpenStack deployment
+#
+
+if [ -f "${OPENRC}" ]; then
+
+    # shellcheck disable=SC1090
+    source "${OPENRC}"
+
+    if rally deployment use \
+        --deployment "${DEPLOYMENT_NAME}" >/tmp/rally-deployment-use.log 2>&1; then
+
+        write_status "[ OK ] Deployment '${DEPLOYMENT_NAME}' exists"
+
+    else
+
+        if rally deployment create \
+            --fromenv \
+            --name "${DEPLOYMENT_NAME}" >/tmp/rally-deployment-create.log 2>&1; then
+
+            write_status "[ OK ] Deployment '${DEPLOYMENT_NAME}' created"
+
+        else
+
+            write_status "[FAIL] Unable to create deployment '${DEPLOYMENT_NAME}'"
+        fi
+    fi
+
+
+    #
+    # Check deployment only if it can be selected
+    #
+
+    if rally deployment use \
+        --deployment "${DEPLOYMENT_NAME}" >/dev/null 2>&1; then
+
+        if rally deployment check \
+            --deployment "${DEPLOYMENT_NAME}" >/tmp/rally-deployment-check.log 2>&1; then
+
+            write_status "[ OK ] OpenStack deployment check"
+        else
+            write_status "[WARN] OpenStack deployment check failed"
+        fi
+    fi
+
+else
+    write_status "[WARN] OpenRC not found: ${OPENRC}"
+fi
+
+
+write_status ""
+write_status "Container is running in console mode."
+write_status ""
+write_status "Useful commands:"
+write_status "  rally deployment list"
+write_status "  rally deployment check"
+write_status "  rally task list"
+
+# Mark initialization as complete only after the full status is written.
+touch "${READY_FILE}"
+
+
+#
+# Keep utility container running
+#
+
+while :; do
+    sleep 3600 &
+    wait $!
+done
