@@ -55,6 +55,8 @@ identity:
     password: CHANGE_ME
     # Keep the existing password; failed authentication stops preparation.
     update_existing_password: false
+    # For nova-drain with default Nova policy, use [member, admin].
+    # prepare assigns these roles in this project and leaves them assigned.
     roles: [member]
 
 rally:
@@ -225,11 +227,10 @@ scenarios:
   nova-drain:
     enabled: false           # Enable explicitly on a dedicated test host.
     host: null               # A specific hypervisor is required.
-    active_instances: 2
-    stopped_instances: 1
+    active_instances: 10     # Submit all live migrations before waiting.
+    stopped_instances: 0     # Optional cold migration coverage.
     # Stop before disabling/migrating if the host has unrelated VMs.
     require_exclusive_test_host: true
-    max_parallel_migrations: 1
     restore_original_service_state: true
 
   nova-evacuate:

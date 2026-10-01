@@ -83,6 +83,21 @@ class ConfigTest(RunnerCase):
         path.write_text(yaml.safe_dump(value))
         return config.load(path)
 
+    def test_legacy_drain_limit_is_accepted_but_no_longer_applied(self):
+        cfg = self.load_values(
+            {"scenarios": {"nova-drain": {"max_parallel_migrations": 1}}}
+        )
+        self.assertEqual(
+            10, cfg["scenarios"]["nova-drain"]["active_instances"]
+        )
+        self.assertNotIn(
+            "max_parallel_migrations", cfg["scenarios"]["nova-drain"]
+        )
+        with self.assertRaisesRegex(config.InvalidError, "must be 1"):
+            self.load_values(
+                {"scenarios": {"nova-drain": {"max_parallel_migrations": 2}}}
+            )
+
     def test_creation_flags_require_explicit_existing_references(self):
         for kind in (
             "project",
@@ -430,6 +445,134 @@ class StateAndCleanupTest(RunnerCase):
             engine.nova_drain()
         self.cloud.post.assert_not_called()
         self.admin.request.assert_not_called()
+
+    def test_drain_submits_all_ten_live_migrations_before_waiting(self):
+        engine = self.engine()
+        engine.options = dict(
+            self.cfg["scenarios"]["nova-drain"], host="host1"
+        )
+        calls = []
+        vms = [{"id": f"drain-{index}"} for index in range(10)]
+        guests = [mock.Mock() for _ in vms]
+        engine.vm = mock.Mock(
+            side_effect=[
+                (vm, {"id": "port"}, {"id": "floating"}, guest)
+                for vm, guest in zip(vms, guests)
+            ]
+        )
+        engine.describe = mock.Mock(
+            return_value={
+                "OS-EXT-SRV-ATTR:host": "host1",
+                "OS-EXT-AZ:availability_zone": "az1",
+            }
+        )
+        engine.save_service = mock.Mock()
+        engine.restore_services = mock.Mock()
+        eligible = {"nova-compute": {"active": True, "available": True}}
+        self.admin.list.return_value = [
+            {
+                "zoneName": "az1",
+                "hosts": {
+                    "host1": eligible,
+                    "host2": eligible,
+                },
+            }
+        ]
+        engine.request_live_migration = mock.Mock(
+            side_effect=lambda vm, scheduler: (
+                calls.append(("request", vm["id"])),
+                (
+                    None,
+                    {
+                        "OS-EXT-SRV-ATTR:host": "host1",
+                        "OS-EXT-AZ:availability_zone": "az1",
+                    },
+                ),
+            )[1]
+        )
+        engine.wait_migration = mock.Mock(
+            side_effect=lambda vm, *args, **kwargs: calls.append(
+                ("wait", vm["id"])
+            )
+        )
+        with (
+            mock.patch(
+                "ultimum_validation.scenarios.exclusive_host",
+                return_value=[],
+            ),
+            mock.patch(
+                "ultimum_validation.scenarios.host_service",
+                return_value={"id": "service", "zone": "az1"},
+            ),
+            mock.patch("ultimum_validation.scenarios.Continuity") as probe,
+        ):
+            engine.nova_drain()
+        self.assertEqual(10, engine.vm.call_count)
+        for call in engine.vm.call_args_list:
+            self.assertEqual("host1", call.kwargs["host"])
+            self.assertEqual("az1", call.kwargs["az"])
+        self.assertEqual(10, probe.call_count)
+        self.assertEqual(
+            [("request", vm["id"]) for vm in vms]
+            + [("wait", vm["id"]) for vm in vms],
+            calls,
+        )
+        for call in engine.request_live_migration.call_args_list:
+            self.assertTrue(call.kwargs["scheduler"])
+        engine.restore_services.assert_called_once_with()
+
+    def test_scheduler_migration_accepts_only_another_host_in_same_az(self):
+        engine = self.engine()
+        vm = {"id": "drain-vm"}
+        before = {
+            "OS-EXT-SRV-ATTR:host": "host1",
+            "OS-EXT-AZ:availability_zone": "az1",
+            "status": "ACTIVE",
+        }
+        after = dict(before, **{"OS-EXT-SRV-ATTR:host": "host2"})
+        engine.target = mock.Mock(return_value=("host2", before))
+        engine.action = mock.Mock()
+        engine.describe = mock.Mock(return_value=after)
+        target, original = engine.request_live_migration(vm, scheduler=True)
+        self.assertIsNone(target)
+        self.assertIs(before, original)
+        engine.action.assert_called_once_with(
+            vm,
+            {"os-migrateLive": {"host": None, "block_migration": False}},
+            self.admin,
+        )
+        self.assertEqual(after, engine.wait_migration(vm, target, original))
+        engine.describe.return_value = dict(
+            after, **{"OS-EXT-AZ:availability_zone": "az2"}
+        )
+        with self.assertRaisesRegex(AssertionError, "availability zone"):
+            engine.wait_migration(vm, target, original)
+
+    def test_drain_requires_an_enabled_target_in_the_source_az(self):
+        engine = self.engine()
+        engine.options = dict(
+            self.cfg["scenarios"]["nova-drain"], host="host1"
+        )
+        engine.vm = mock.Mock()
+        self.admin.list.return_value = [
+            {
+                "zoneName": "az1",
+                "hosts": {"host1": {"nova-compute": {"active": True}}},
+            }
+        ]
+        with (
+            mock.patch(
+                "ultimum_validation.scenarios.exclusive_host",
+                return_value=[],
+            ),
+            mock.patch(
+                "ultimum_validation.scenarios.host_service",
+                return_value={"zone": "az1"},
+            ),
+        ):
+            with self.assertRaisesRegex(config.InvalidError, "No other"):
+                engine.nova_drain()
+        engine.vm.assert_not_called()
 
     def test_reconciliation_failure_still_restores_host_service(self):
         engine = self.engine()

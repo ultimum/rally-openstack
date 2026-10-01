@@ -72,6 +72,15 @@ def upgrade_keys(value):
     execution = value.get("execution", {})
     if isinstance(execution, dict) and "resource_prefix" in execution:
         alias("resources_prefix", execution.pop("resource_prefix"))
+    scenarios = value.get("scenarios", {})
+    if isinstance(scenarios, dict):
+        drain = scenarios.get("nova-drain", {})
+        if isinstance(drain, dict) and "max_parallel_migrations" in drain:
+            old_limit = drain.pop("max_parallel_migrations")
+            if type(old_limit) is not int or old_limit != 1:
+                raise InvalidError(
+                    "Legacy nova-drain.max_parallel_migrations must be 1"
+                )
     return value
 
 
@@ -316,10 +325,6 @@ def validate(cfg, scenario=None):
             and not s["restore_original_service_state"]
         ):
             raise InvalidError("Host service restoration cannot be disabled")
-    if scenario == "nova-drain" and s["max_parallel_migrations"] != 1:
-        raise InvalidError(
-            "nova-drain currently supports serial migrations only"
-        )
     if scenario == "nova-drain" and (
         min(s["active_instances"], s["stopped_instances"]) < 0
         or s["active_instances"] + s["stopped_instances"] == 0

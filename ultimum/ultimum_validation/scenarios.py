@@ -3,6 +3,7 @@
 import base64
 import collections
 import concurrent.futures
+import contextlib
 import json
 import os
 import pathlib
@@ -191,12 +192,29 @@ class Scenarios(Resources):
         s = self.options
         self.ledger.event(f"CHECK dedicated drain host: {s['host']}")
         exclusive_host(self.admin, s["host"])
+        source_az = host_service(self.admin, s["host"]).get("zone")
+        if not source_az:
+            raise InvalidError("Cannot resolve drain host availability zone")
+        zones = self.admin.list(
+            "compute", "/os-availability-zone/detail", "availabilityZoneInfo"
+        )
+        zone = next((z for z in zones if z["zoneName"] == source_az), None)
+        hosts = (zone or {}).get("hosts") or {}
+        if s["host"] not in hosts:
+            raise InvalidError("Drain host is absent from its reported AZ")
+        if not any(
+            host != s["host"]
+            and services.get("nova-compute", {}).get("active")
+            and services["nova-compute"].get("available")
+            for host, services in hosts.items()
+        ):
+            raise InvalidError("No other enabled/up compute in drain host AZ")
         active_vms = [
-            self.vm(host=s["host"], label="drain-active")
+            self.vm(host=s["host"], az=source_az, label="drain-active")
             for _ in range(s["active_instances"])
         ]
         stopped_vms = [
-            self.vm(host=s["host"], label="drain-stopped")
+            self.vm(host=s["host"], az=source_az, label="drain-stopped")
             for _ in range(s["stopped_instances"])
         ]
         active = [vm[0] for vm in active_vms]
@@ -214,9 +232,13 @@ class Scenarios(Resources):
                 self.timeout,
             )
         for vm in active + stopped:
-            if self.describe(vm)["OS-EXT-SRV-ATTR:host"] != s["host"]:
+            placement = self.describe(vm)
+            if (
+                placement["OS-EXT-SRV-ATTR:host"] != s["host"]
+                or placement["OS-EXT-AZ:availability_zone"] != source_az
+            ):
                 raise AssertionError(
-                    "Requested placement did not land on dedicated host"
+                    "Requested placement did not land on the host and AZ"
                 )
         exclusive_host(
             self.admin, s["host"], [vm["id"] for vm in active + stopped]
@@ -236,13 +258,33 @@ class Scenarios(Resources):
                         "disabled_reason": "Ultimum " + self.run_id,
                     },
                 )
-                for vm, _, _, guest in active_vms:
-                    with Continuity(
-                        guest,
-                        self.cfg["scenarios"]["nova-live-migration"],
-                        self.ledger,
-                    ):
-                        self.migrate(vm)
+                with contextlib.ExitStack() as probes:
+                    for _, _, _, guest in active_vms:
+                        probes.enter_context(
+                            Continuity(
+                                guest,
+                                self.cfg["scenarios"]["nova-live-migration"],
+                                self.ledger,
+                            )
+                        )
+                    pending = []
+                    for vm in active:
+                        target, before = self.request_live_migration(
+                            vm, scheduler=True
+                        )
+                        pending.append((vm, target, before))
+                    self.ledger.evidence(
+                        "drain_live_requests",
+                        {"server_ids": [vm["id"] for vm in active]},
+                    )
+                    deadline = time.monotonic() + self.timeout * len(active)
+                    for vm, target, before in pending:
+                        self.wait_migration(
+                            vm,
+                            target,
+                            before,
+                            timeout=max(0, deadline - time.monotonic()),
+                        )
                 for vm, _, floating, _ in stopped_vms:
                     self.migrate(vm, cold=True)
                     state = self.describe(vm)

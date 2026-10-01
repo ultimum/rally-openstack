@@ -472,23 +472,35 @@ is not converted to PASS. Regular TPM evacuation is outside the Masakari test.
 
 1. Requires enabled=true, a specific host, an up/enabled compute service
    and no existing unrelated VMs on the host across any project.
-2. Creates its own VMs with the requested host. **The test user must have
-   requested_destination policy permission**; the runner does not grant
-   it by automatically assigning an admin role. Determines and verifies
-   each VM's actual host.
-3. For stopped_instances, writes a verification file over SSH, stops the VM
-   and waits for SHUTOFF. Prepares floating IPs and SSH for active VMs.
+2. Creates ten active VMs by default in the configured test project,
+   requesting the selected host and its availability zone. **The test user must
+   have requested_destination policy permission**. If the cloud uses Nova's
+   default admin-only policy, set ``identity.user.roles: [member, admin]``
+   before preparation; the administrative OpenRC assigns that role within
+   the configured test project. VM creation still uses the project-scoped
+   test user, so ownership stays in that project. The role assignment
+   persists after the test. Verifies actual host/AZ.
+3. Optionally creates ``stopped_instances`` (default zero), writes a
+   verification file over SSH, stops each VM and waits for SHUTOFF. Prepares
+   floating IPs and SSH for all active VMs.
 4. Rechecks that the host contains only VMs from this run. Saves the original
    Nova service state and disables the service to prevent further scheduling.
-5. Migrates active VMs sequentially, with ping and persistent SSH using the
-   nova-live-migration limits. Cold-migrates stopped VMs and confirms
-   VERIFY_RESIZE.
+5. Starts ping and persistent SSH probes for every active VM, then sends all
+   live migration requests without waiting for individual completion. Nova's
+   ``max_concurrent_live_migrations`` setting on the source compute controls
+   how many run at once (normally one). The scheduler chooses destination
+   hosts in the same AZ; the runner verifies each completed migration and
+   applies the ``nova-live-migration`` continuity limits to every VM.
+   Request acceptance does not guarantee that every VM is visible in
+   ``Migrating`` at one instant; fast migrations may already have completed.
+   Cold-migrates stopped VMs and confirms VERIFY_RESIZE.
 6. Verifies that cold migration preserves SHUTOFF; then starts the VM on
    its new host and checks the verification file over SSH.
 7. Verifies that no VMs remain on the source host, restores the original service
    state even on failure, and removes run-owned resources per the cleanup mode.
 
-This scenario uses live/cold migration, not evacuate.
+This scenario exercises the equivalent Nova API actions rather than opening
+Horizon. It uses live/cold migration, not evacuate.
 
 .. scenario: nova-cloud-init
 

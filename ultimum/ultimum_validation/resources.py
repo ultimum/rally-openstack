@@ -526,18 +526,38 @@ class Resources:
             raise InvalidError("No other enabled/up compute in source AZ")
         return sorted(candidates)[0], before
 
-    def migrate(self, server, target=None, cold=False):
+    def request_live_migration(self, server, target=None, scheduler=False):
         target, before = self.target(server, target)
         actor = (
             self.admin
             if self.cfg["compute"]["migration_actor"] == "admin"
             else self.cloud
         )
+        destination = None if scheduler else target
         self.ledger.event(
-            f"{'Cold' if cold else 'Live'} migration "
-            f"{server['id']} -> {target}"
+            f"Live migration {server['id']} -> {destination or 'scheduler'}"
         )
+        self.action(
+            server,
+            {
+                "os-migrateLive": {
+                    "host": destination,
+                    "block_migration": False,
+                }
+            },
+            actor,
+        )
+        return destination, before
+
+    def migrate(self, server, target=None, cold=False):
         if cold:
+            target, before = self.target(server, target)
+            actor = (
+                self.admin
+                if self.cfg["compute"]["migration_actor"] == "admin"
+                else self.cloud
+            )
+            self.ledger.event(f"Cold migration {server['id']} -> {target}")
             self.action(server, {"migrate": {"host": target}}, actor)
             self.cloud.wait_status(
                 "compute",
@@ -548,17 +568,21 @@ class Resources:
             )
             self.action(server, {"confirmResize": None}, actor)
         else:
-            self.action(
-                server,
-                {"os-migrateLive": {"host": target, "block_migration": False}},
-                actor,
-            )
+            target, before = self.request_live_migration(server, target)
 
+        return self.wait_migration(server, target, before, cold=cold)
+
+    def wait_migration(self, server, target, before, cold=False, timeout=None):
+        source = before["OS-EXT-SRV-ATTR:host"]
         def migrated(obj):
             if obj["status"] == "ERROR":
                 raise AssertionError("VM entered ERROR during migration")
             return (
-                obj["OS-EXT-SRV-ATTR:host"] == target
+                (
+                    obj["OS-EXT-SRV-ATTR:host"] == target
+                    if target is not None
+                    else obj["OS-EXT-SRV-ATTR:host"] != source
+                )
                 and obj["status"]
                 in ({"SHUTOFF", "ACTIVE"} if cold else {"ACTIVE"})
                 and not obj.get("OS-EXT-STS:task_state")
@@ -567,7 +591,7 @@ class Resources:
         after = wait_for(
             lambda: self.describe(server),
             migrated,
-            self.timeout,
+            self.timeout if timeout is None else timeout,
             description="host change after migration",
         )
         if (
@@ -578,12 +602,15 @@ class Resources:
         self.ledger.evidence(
             "migration_" + server["id"],
             {
-                "source": before["OS-EXT-SRV-ATTR:host"],
+                "source": source,
                 "target": after["OS-EXT-SRV-ATTR:host"],
                 "az": after["OS-EXT-AZ:availability_zone"],
             },
         )
-        self.ledger.event(f"OK migration: VM {server['id']} on {target}")
+        self.ledger.event(
+            f"OK migration: VM {server['id']} on "
+            f"{after['OS-EXT-SRV-ATTR:host']}"
+        )
         return after
 
     def attach(self, server, volume):
