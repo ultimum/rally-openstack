@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+
+set -o pipefail
+
+DATA_DIR="${RALLY_DATA_DIR:-/data}"
+TASK_DIR="${RALLY_TASK_DIR:-/opt/rally-openstack/tasks}"
+
+IMAGE_NAME="${RALLY_IMAGE_NAME:-^Cirros.*}"
+FLAVOR_NAME="${RALLY_FLAVOR_NAME:-m1.tiny}"
+VOLUME_TYPE="${RALLY_VOLUME_TYPE:-cz03}"
+AVAILABILITY_ZONE="${RALLY_AVAILABILITY_ZONE:-cz03}"
+
+TASK="${TASK_DIR}/ultimum/neutron-production.yaml"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+
+info() {
+    printf "${CYAN}==>${RESET} %s\n" "$*"
+}
+
+ok() {
+    printf "${GREEN}[ OK ]${RESET} %s\n" "$*"
+}
+
+fail() {
+    printf "${RED}[FAIL]${RESET} %s\n" "$*"
+}
+
+die() {
+    fail "$*"
+    exit 1
+}
+
+
+printf "\n${BOLD}Ultimum Rally Neutron validation${RESET}\n"
+printf "===============================\n\n"
+
+
+#
+# Data volume
+#
+
+info "Checking Rally data volume"
+
+if [ ! -d "${DATA_DIR}" ]; then
+    die "Missing data volume: ${DATA_DIR}"
+fi
+
+ok "Data volume available: ${DATA_DIR}"
+
+
+#
+# Requirements
+#
+
+info "Checking required commands"
+
+for cmd in rally; do
+    if ! command -v "${cmd}" >/dev/null 2>&1; then
+        die "Required command '${cmd}' is not installed"
+    fi
+done
+
+ok "Required commands available"
+
+
+#
+# Rally deployment
+#
+
+info "Checking Rally deployment"
+
+if ! rally deployment show >/dev/null 2>&1; then
+    die "No active Rally deployment"
+fi
+
+ok "Rally deployment is active"
+
+
+#
+# Rally task
+#
+
+printf "\n"
+
+if [ ! -f "${TASK}" ]; then
+    die "Rally task not found: ${TASK}"
+fi
+
+ok "Rally task found: ${TASK}"
+
+
+#
+# Task arguments
+#
+
+TASK_ARGS="{\"image_name\":\"${IMAGE_NAME}\",\"flavor_name\":\"${FLAVOR_NAME}\",\"volume_type\":\"${VOLUME_TYPE}\",\"availability_zone\":\"${AVAILABILITY_ZONE}\"}"
+
+
+#
+# Validate
+#
+
+info "Validating Ultimum Rally Neutron task"
+
+if ! rally task validate \
+    "${TASK}" \
+    --task-args \
+    "${TASK_ARGS}"; then
+
+    die "Ultimum Rally Neutron task validation failed"
+fi
+
+ok "Ultimum Rally Neutron task validation passed"
+
+
+#
+# Run
+#
+
+printf "\n"
+printf "${BOLD}Starting Ultimum Rally Neutron validation${RESET}\n\n"
+
+rally task start \
+    "${TASK}" \
+    --task-args \
+    "${TASK_ARGS}"
+
+RC=$?
+
+printf "\n"
+
+if [ "${RC}" -eq 0 ]; then
+    ok "Ultimum Rally Neutron validation finished successfully"
+else
+    fail "Ultimum Rally Neutron validation failed"
+fi
+
+
+#
+# Last task
+#
+
+TASK_UUID="$(rally task list --uuids-only 2>/dev/null | head -n1 || true)"
+
+if [ -n "${TASK_UUID}" ]; then
+    printf "\n"
+    info "Task UUID: ${TASK_UUID}"
+
+    printf "\nUseful commands:\n"
+    printf "  rally task detailed ${TASK_UUID}\n"
+    printf "  rally task report ${TASK_UUID} --out ${DATA_DIR}/neutron-report.html\n"
+fi
+
+printf "\n"
+
+exit "${RC}"

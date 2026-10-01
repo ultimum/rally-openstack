@@ -1,0 +1,545 @@
+{% set image_name = image_name | default("^Cirros.*") %}
+{% set flavor_name = flavor_name | default("m1.tiny") %}
+{% set volume_type = volume_type | default("cz03") %}
+{% set availability_zone = availability_zone | default("cz03") %}
+---
+version: 2
+title: Ultimum Neutron Production Validation
+description: >
+  Small production validation suite for tenant networking. It avoids public
+  networks and floating IPs, creates tenant networks/subnets/routers/ports
+  and security groups, boots workloads in the requested Nova availability
+  zone, and verifies boot-from-volume with the requested Cinder volume type
+  and availability zone.
+
+subtasks:
+  - title: Tenant network lifecycle
+    workloads:
+      - scenario:
+          NeutronNetworks.create_and_list_networks:
+            network_create_args: {}
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          quotas:
+            neutron:
+              network: -1
+        runner:
+          constant:
+            times: 1
+            concurrency: 1
+        sla:
+          failure_rate:
+            max: 0
+
+      - scenario:
+          NeutronNetworks.create_and_show_network:
+            network_create_args: {}
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          quotas:
+            neutron:
+              network: -1
+        runner:
+          constant:
+            times: 1
+            concurrency: 1
+        sla:
+          failure_rate:
+            max: 0
+
+      - scenario:
+          NeutronNetworks.create_and_update_networks:
+            network_create_args: {}
+            network_update_args:
+              admin_state_up: false
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          quotas:
+            neutron:
+              network: -1
+        runner:
+          constant:
+            times: 1
+            concurrency: 1
+        sla:
+          failure_rate:
+            max: 0
+
+      - scenario:
+          NeutronNetworks.create_and_delete_networks:
+            network_create_args: {}
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          quotas:
+            neutron:
+              network: -1
+              subnet: -1
+        runner:
+          constant:
+            times: 1
+            concurrency: 1
+        sla:
+          failure_rate:
+            max: 0
+
+  - title: Tenant subnet lifecycle
+    workloads:
+      - scenario:
+          NeutronNetworks.create_and_list_subnets:
+            network_create_args: {}
+            subnet_create_args: {}
+            subnet_cidr_start: 10.240.0.0/24
+            subnets_per_network: 2
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          quotas:
+            neutron:
+              network: -1
+              subnet: -1
+        runner:
+          constant:
+            times: 1
+            concurrency: 1
+        sla:
+          failure_rate:
+            max: 0
+
+      - scenario:
+          NeutronNetworks.create_and_show_subnets:
+            network_create_args: {}
+            subnet_create_args: {}
+            subnet_cidr_start: 10.241.0.0/24
+            subnets_per_network: 2
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          quotas:
+            neutron:
+              network: -1
+              subnet: -1
+        runner:
+          constant:
+            times: 1
+            concurrency: 1
+        sla:
+          failure_rate:
+            max: 0
+
+      - scenario:
+          NeutronNetworks.create_and_update_subnets:
+            network_create_args: {}
+            subnet_create_args: {}
+            subnet_cidr_start: 10.242.0.0/24
+            subnets_per_network: 1
+            subnet_update_args:
+              enable_dhcp: false
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          quotas:
+            neutron:
+              network: -1
+              subnet: -1
+        runner:
+          constant:
+            times: 1
+            concurrency: 1
+        sla:
+          failure_rate:
+            max: 0
+
+      - scenario:
+          NeutronNetworks.create_and_delete_subnets:
+            network_create_args: {}
+            subnet_create_args: {}
+            subnet_cidr_start: 10.243.0.0/24
+            subnets_per_network: 2
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          quotas:
+            neutron:
+              network: -1
+              subnet: -1
+        runner:
+          constant:
+            times: 1
+            concurrency: 1
+        sla:
+          failure_rate:
+            max: 0
+
+  - title: Tenant router lifecycle
+    workloads:
+      - scenario:
+          NeutronNetworks.create_and_list_routers:
+            network_create_args: {}
+            subnet_create_args: {}
+            subnet_cidr_start: 10.244.0.0/24
+            subnets_per_network: 2
+            router_create_args: {}
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          quotas:
+            neutron:
+              network: -1
+              subnet: -1
+              router: -1
+              port: -1
+        runner:
+          constant:
+            times: 1
+            concurrency: 1
+        sla:
+          failure_rate:
+            max: 0
+
+      - scenario:
+          NeutronNetworks.create_and_show_routers:
+            network_create_args: {}
+            subnet_create_args: {}
+            subnet_cidr_start: 10.245.0.0/24
+            subnets_per_network: 2
+            router_create_args: {}
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          quotas:
+            neutron:
+              network: -1
+              subnet: -1
+              router: -1
+              port: -1
+        runner:
+          constant:
+            times: 1
+            concurrency: 1
+        sla:
+          failure_rate:
+            max: 0
+
+      - scenario:
+          NeutronNetworks.create_and_update_routers:
+            network_create_args: {}
+            subnet_create_args: {}
+            subnet_cidr_start: 10.246.0.0/24
+            subnets_per_network: 2
+            router_create_args: {}
+            router_update_args:
+              admin_state_up: false
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          quotas:
+            neutron:
+              network: -1
+              subnet: -1
+              router: -1
+              port: -1
+        runner:
+          constant:
+            times: 1
+            concurrency: 1
+        sla:
+          failure_rate:
+            max: 0
+
+      - scenario:
+          NeutronNetworks.create_and_delete_routers:
+            network_create_args: {}
+            subnet_create_args: {}
+            subnet_cidr_start: 10.247.0.0/24
+            subnets_per_network: 2
+            router_create_args: {}
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          quotas:
+            neutron:
+              network: -1
+              subnet: -1
+              router: -1
+              port: -1
+        runner:
+          constant:
+            times: 1
+            concurrency: 1
+        sla:
+          failure_rate:
+            max: 0
+
+  - title: Tenant port lifecycle
+    workloads:
+      - scenario:
+          NeutronNetworks.create_and_list_ports:
+            port_create_args: {}
+            ports_per_network: 2
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          quotas:
+            neutron:
+              network: -1
+              subnet: -1
+              port: -1
+          network: {}
+        runner:
+          constant:
+            times: 1
+            concurrency: 1
+        sla:
+          failure_rate:
+            max: 0
+
+      - scenario:
+          NeutronNetworks.create_and_show_ports:
+            ports_per_network: 2
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          quotas:
+            neutron:
+              network: -1
+              subnet: -1
+              port: -1
+          network: {}
+        runner:
+          constant:
+            times: 1
+            concurrency: 1
+        sla:
+          failure_rate:
+            max: 0
+
+      - scenario:
+          NeutronNetworks.create_and_update_ports:
+            port_create_args: {}
+            ports_per_network: 1
+            port_update_args:
+              admin_state_up: false
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          quotas:
+            neutron:
+              network: -1
+              subnet: -1
+              port: -1
+          network: {}
+        runner:
+          constant:
+            times: 1
+            concurrency: 1
+        sla:
+          failure_rate:
+            max: 0
+
+      - scenario:
+          NeutronNetworks.create_and_delete_ports:
+            port_create_args: {}
+            ports_per_network: 2
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          quotas:
+            neutron:
+              network: -1
+              subnet: -1
+              port: -1
+          network: {}
+        runner:
+          constant:
+            times: 1
+            concurrency: 1
+        sla:
+          failure_rate:
+            max: 0
+
+  - title: Security group lifecycle
+    workloads:
+      - scenario:
+          NeutronSecurityGroup.create_and_list_security_groups:
+            security_group_create_args: {}
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          quotas:
+            neutron:
+              security_group: -1
+              security_group_rule: -1
+        runner:
+          constant:
+            times: 1
+            concurrency: 1
+        sla:
+          failure_rate:
+            max: 0
+
+      - scenario:
+          NeutronSecurityGroup.create_and_update_security_groups:
+            security_group_create_args: {}
+            security_group_update_args: {}
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          quotas:
+            neutron:
+              security_group: -1
+              security_group_rule: -1
+        runner:
+          constant:
+            times: 1
+            concurrency: 1
+        sla:
+          failure_rate:
+            max: 0
+
+      - scenario:
+          NeutronSecurityGroup.create_and_delete_security_group_rule:
+            security_group_args: {}
+            security_group_rule_args: {}
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          quotas:
+            neutron:
+              security_group: -1
+              security_group_rule: -1
+        runner:
+          constant:
+            times: 1
+            concurrency: 1
+        sla:
+          failure_rate:
+            max: 0
+
+      - scenario:
+          NeutronSecurityGroup.create_and_delete_security_groups:
+            security_group_create_args: {}
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          quotas:
+            neutron:
+              security_group: -1
+              security_group_rule: -1
+        runner:
+          constant:
+            times: 1
+            concurrency: 1
+        sla:
+          failure_rate:
+            max: 0
+
+  - title: VM on tenant networks in requested AZ
+    scenario:
+      NovaServers.boot_and_delete_server:
+        flavor:
+          name: {{ flavor_name }}
+        image:
+          name: {{ image_name }}
+          list_kwargs:
+            visibility: public
+        auto_assign_nic: true
+        availability_zone: {{ availability_zone }}
+    contexts:
+      users:
+        tenants: 1
+        users_per_tenant: 1
+      quotas:
+        neutron:
+          network: -1
+          subnet: -1
+          router: -1
+          port: -1
+          security_group: -1
+          security_group_rule: -1
+        nova:
+          instances: -1
+          cores: -1
+          ram: -1
+      network:
+        start_cidr: 10.248.0.0/24
+        networks_per_tenant: 2
+        subnets_per_network: 1
+        router:
+          external: false
+    runner:
+      constant:
+        times: 1
+        concurrency: 1
+    sla:
+      failure_rate:
+        max: 0
+
+  - title: Boot from volume on tenant network in requested AZ
+    scenario:
+      NovaServers.boot_server_from_volume_and_delete:
+        flavor:
+          name: {{ flavor_name }}
+        image:
+          name: {{ image_name }}
+          list_kwargs:
+            visibility: public
+        volume_size: 1
+        volume_type: {{ volume_type }}
+        create_volume_kwargs:
+          availability_zone: {{ availability_zone }}
+        boot_server_kwargs:
+          availability_zone: {{ availability_zone }}
+          auto_assign_nic: true
+    contexts:
+      users:
+        tenants: 1
+        users_per_tenant: 1
+      quotas:
+        neutron:
+          network: -1
+          subnet: -1
+          port: -1
+        nova:
+          instances: -1
+          cores: -1
+          ram: -1
+        cinder:
+          volumes: -1
+          gigabytes: -1
+      network:
+        start_cidr: 10.251.0.0/24
+        networks_per_tenant: 1
+        subnets_per_network: 1
+        router:
+          external: false
+    runner:
+      constant:
+        times: 1
+        concurrency: 1
+    sla:
+      failure_rate:
+        max: 0
