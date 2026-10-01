@@ -1,0 +1,467 @@
+{% set qcow2_image = qcow2_image | default("/data/extra/cirros-0.6.3-x86_64-disk.img") %}
+{% set raw_image = raw_image | default("/data/extra/cirros-0.6.3-x86_64-disk.raw") %}
+{% set qcow2_image_url = qcow2_image_url | default("https://download.cirros-cloud.net/0.6.3/cirros-0.6.3-x86_64-disk.img") %}
+
+---
+
+version: 2
+
+title: Ultimum Glance Production Validation
+
+description: >
+  Production-oriented Glance validation covering API access,
+  image upload, download, metadata modification, deletion,
+  QCOW2/RAW handling, image lifecycle, authentication and both
+  glance-direct and web-download image import.
+
+subtasks:
+
+  - title: List images
+    scenario:
+      GlanceImages.list_images: {}
+
+    runner:
+      constant:
+        times: 10
+        concurrency: 2
+
+    contexts:
+      users:
+        tenants: 2
+        users_per_tenant: 2
+
+    sla:
+      failure_rate:
+        max: 0
+
+
+  - title: QCOW2 create and get
+    scenario:
+      GlanceImages.create_and_get_image:
+        image_location: "{{ qcow2_image }}"
+        disk_format: qcow2
+        container_format: bare
+        visibility: private
+        properties:
+          rally_test: glance-production
+
+    runner:
+      constant:
+        times: 4
+        concurrency: 2
+
+    contexts:
+      users:
+        tenants: 2
+        users_per_tenant: 1
+
+    sla:
+      failure_rate:
+        max: 0
+
+
+  - title: QCOW2 upload and download
+    scenario:
+      GlanceImages.create_and_download_image:
+        image_location: "{{ qcow2_image }}"
+        disk_format: qcow2
+        container_format: bare
+        visibility: private
+        properties:
+          rally_test: glance-download
+
+    runner:
+      constant:
+        times: 4
+        concurrency: 2
+
+    contexts:
+      users:
+        tenants: 2
+        users_per_tenant: 1
+
+    sla:
+      failure_rate:
+        max: 0
+
+
+  - title: RAW create and delete
+    scenario:
+      GlanceImages.create_and_delete_image:
+        image_location: "{{ raw_image }}"
+        disk_format: raw
+        container_format: bare
+        visibility: private
+        properties:
+          rally_test: glance-raw
+
+    runner:
+      constant:
+        times: 2
+        concurrency: 1
+
+    contexts:
+      users:
+        tenants: 1
+        users_per_tenant: 1
+
+    sla:
+      failure_rate:
+        max: 0
+
+
+  - title: Image metadata update
+    scenario:
+      GlanceImages.create_and_update_image:
+        image_location: "{{ qcow2_image }}"
+        disk_format: qcow2
+        container_format: bare
+        visibility: private
+
+        create_min_disk: 0
+        create_min_ram: 0
+
+        create_properties:
+          rally_test: glance-update
+          rally_state: initial
+
+        update_min_disk: 1
+        update_min_ram: 64
+
+    runner:
+      constant:
+        times: 2
+        concurrency: 1
+
+    contexts:
+      users:
+        tenants: 1
+        users_per_tenant: 1
+
+    sla:
+      failure_rate:
+        max: 0
+
+
+  - title: Interoperable image import
+    scenario:
+      GlanceImages.import_and_delete_image:
+        image_location: "{{ qcow2_image }}"
+        disk_format: qcow2
+        container_format: bare
+        visibility: private
+        import_method: glance-direct
+        properties:
+          rally_test: glance-import
+
+    runner:
+      constant:
+        times: 2
+        concurrency: 1
+
+    contexts:
+      users:
+        tenants: 1
+        users_per_tenant: 1
+
+    sla:
+      failure_rate:
+        max: 0
+
+
+  - title: Authenticate.validate_glance tests
+    scenario:
+      Authenticate.validate_glance:
+        repetitions: 2
+    contexts:
+      users:
+        tenants: 3
+        users_per_tenant: 5
+    runner:
+      constant:
+        times: 10
+        concurrency: 5
+    sla:
+      failure_rate:
+        max: 0
+
+  - title: GlanceImages.list_images tests
+    workloads:
+      - scenario:
+          GlanceImages.list_images: {}
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 2
+          images:
+            image_url: '{{ qcow2_image }}'
+            disk_format: qcow2
+            container_format: bare
+            images_per_tenant: 1
+        runner:
+          constant:
+            times: 5
+            concurrency: 5
+        sla:
+          failure_rate:
+            max: 0
+
+      - scenario:
+          GlanceImages.list_images: {}
+        contexts:
+          users:
+            tenants: 2
+            users_per_tenant: 1
+          images:
+            image_url: '{{ qcow2_image }}'
+            disk_format: qcow2
+            container_format: bare
+            images_per_tenant: 2
+        runner:
+          constant:
+            times: 5
+            concurrency: 5
+        sla:
+          failure_rate:
+            max: 0
+
+  - title: GlanceImages.create_and_list_image tests
+    workloads:
+      - description: Test qcow2 image
+        scenario:
+          GlanceImages.create_and_list_image:
+            image_location: '{{ qcow2_image }}'
+            container_format: bare
+            disk_format: qcow2
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          api_versions:
+            glance:
+              version: 2
+        runner:
+          constant:
+            times: 1
+            concurrency: 1
+        sla:
+          failure_rate:
+            max: 0
+
+      - description: Test raw image
+        scenario:
+          GlanceImages.create_and_list_image:
+            image_location: '{{ raw_image }}'
+            container_format: bare
+            disk_format: raw
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          api_versions:
+            glance:
+              version: 2
+        runner:
+          constant:
+            times: 1
+            concurrency: 1
+        sla:
+          failure_rate:
+            max: 0
+
+  - title: GlanceImages.create_and_get_image tests
+    scenario:
+      GlanceImages.create_and_get_image:
+        image_location: '{{ qcow2_image }}'
+        container_format: bare
+        disk_format: qcow2
+    contexts:
+      users:
+        tenants: 1
+        users_per_tenant: 1
+      api_versions:
+        glance:
+          version: 2
+    runner:
+      constant:
+        times: 2
+        concurrency: 2
+    sla:
+      failure_rate:
+        max: 0
+
+  - title: GlanceImages.create_and_delete_image tests
+    workloads:
+      - description: Delete a qcow2 image
+        scenario:
+          GlanceImages.create_and_delete_image:
+            image_location: '{{ qcow2_image }}'
+            container_format: bare
+            disk_format: qcow2
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+        runner:
+          constant:
+            times: 2
+            concurrency: 2
+        sla:
+          failure_rate:
+            max: 0
+
+      - description: Delete a raw image
+        scenario:
+          GlanceImages.create_and_delete_image:
+            image_location: '{{ raw_image }}'
+            container_format: bare
+            disk_format: raw
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+        runner:
+          constant:
+            times: 2
+            concurrency: 2
+        sla:
+          failure_rate:
+            max: 0
+
+  - title: GlanceImages.create_and_update_image tests
+    workloads:
+      - description: Update min_disk and min_ram on an existing image
+        scenario:
+          GlanceImages.create_and_update_image:
+            image_location: '{{ qcow2_image }}'
+            container_format: bare
+            disk_format: qcow2
+            update_min_disk: 1
+            update_min_ram: 128
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          api_versions:
+            glance:
+              version: 2
+        runner:
+          constant:
+            times: 2
+            concurrency: 2
+        sla:
+          failure_rate:
+            max: 0
+
+      - description: Create image with properties then remove them on update
+        scenario:
+          GlanceImages.create_and_update_image:
+            image_location: '{{ qcow2_image }}'
+            container_format: bare
+            disk_format: qcow2
+            create_properties:
+              custom_tag: rally_test
+            remove_props:
+              - custom_tag
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          api_versions:
+            glance:
+              version: 2
+        runner:
+          constant:
+            times: 2
+            concurrency: 2
+        sla:
+          failure_rate:
+            max: 0
+
+  - title: GlanceImages.create_and_deactivate_image tests
+    scenario:
+      GlanceImages.create_and_deactivate_image:
+        image_location: '{{ qcow2_image }}'
+        container_format: bare
+        disk_format: qcow2
+    contexts:
+      users:
+        tenants: 1
+        users_per_tenant: 1
+      api_versions:
+        glance:
+          version: 2
+    runner:
+      constant:
+        times: 2
+        concurrency: 2
+    sla:
+      failure_rate:
+        max: 0
+
+  - title: GlanceImages.create_and_download_image tests
+    scenario:
+      GlanceImages.create_and_download_image:
+        image_location: '{{ qcow2_image }}'
+        container_format: bare
+        disk_format: qcow2
+    contexts:
+      users:
+        tenants: 1
+        users_per_tenant: 1
+      api_versions:
+        glance:
+          version: 2
+    runner:
+      constant:
+        times: 2
+        concurrency: 2
+    sla:
+      failure_rate:
+        max: 0
+
+  - title: GlanceImages.import_and_delete_image tests
+    workloads:
+      - description: glance-direct import of a local raw image
+        scenario:
+          GlanceImages.import_and_delete_image:
+            image_location: '{{ raw_image }}'
+            container_format: bare
+            disk_format: raw
+            import_method: glance-direct
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          api_versions:
+            glance:
+              version: 2
+        runner:
+          constant:
+            times: 1
+            concurrency: 1
+        sla:
+          failure_rate:
+            max: 100
+
+      - description: web-download import from official CirrOS HTTPS URL
+        scenario:
+          GlanceImages.import_and_delete_image:
+            image_location: '{{ qcow2_image_url }}'
+            container_format: bare
+            disk_format: qcow2
+            import_method: web-download
+        contexts:
+          users:
+            tenants: 1
+            users_per_tenant: 1
+          api_versions:
+            glance:
+              version: 2
+        runner:
+          constant:
+            times: 1
+            concurrency: 1
+        sla:
+          failure_rate:
+            max: 100

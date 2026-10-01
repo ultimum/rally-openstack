@@ -22,9 +22,12 @@ RUN curl -L https://raw.githubusercontent.com/openstack/requirements/refs/heads/
 RUN pip3 install --break-system-packages -e /opt/rally /opt/rally-openstack -c /opt/upper-constraints.txt \
     && mkdir -p /opt/rally-workdir
 
+# Use the Ultimum tasks from this build context alongside their wrappers.
+COPY tasks/ultimum/ /opt/rally-openstack/tasks/ultimum/
 COPY ultimum/rally-* /usr/local/bin/
+COPY ultimum/ultimum-* /usr/local/bin/
 COPY ultimum/rally.conf /etc/rally/
-RUN chmod +x /usr/local/bin/rally-*
+RUN chmod +x /usr/local/bin/rally-* /usr/local/bin/ultimum-*
 RUN echo 'source /usr/local/bin/rally-welcome' >> /root/.bashrc
 
 WORKDIR /opt/rally-workdir
