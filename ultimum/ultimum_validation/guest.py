@@ -32,6 +32,9 @@ class Guest:
 
     def connect(self):
         cfg, ledger, server_id = self.cfg, self.ledger, self.server_id
+        ledger.event(
+            f"WAIT SSH {cfg['ssh_username']}@{self.address}:{cfg['ssh_port']}"
+        )
 
         class RunHostKey(paramiko.MissingHostKeyPolicy):
             def missing_host_key(self, client, hostname, key):
@@ -73,6 +76,7 @@ class Guest:
         wait_for(
             attempt, bool, cfg["ssh_timeout_seconds"], description="guest SSH"
         )
+        ledger.event(f"OK SSH connected to VM {server_id} ({self.address})")
         return self
 
     def close(self):
@@ -125,6 +129,7 @@ class Guest:
                         f"Image lacks {package}; preinstall or enable "
                         "guest.install_missing_packages"
                     ) from None
+                self.ledger.event(f"INSTALL guest package: {package}")
                 self.command(
                     (
                         "sudo -n apt-get update && sudo -n env "

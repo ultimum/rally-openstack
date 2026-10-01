@@ -26,6 +26,8 @@ from .prepare import preflight
 from .prepare import prepare_network
 from .prepare import resolve_base
 from .prepare import set_quotas
+from .progress import progress
+from .progress import watch
 from .resources import Resources
 from .state import Ledger
 from .state import project_lock
@@ -98,9 +100,11 @@ def register_environment(cfg, rc, runtime):
         env_id = json.loads(saved.read_text())["environment_id"]
         result = rally(cfg, "env", "show", env_id, "--json")
         if result.returncode == 0:
+            progress(f"REUSE Rally environment: {env_id}")
             return env_id
     spec_path = state_dir / (".environment-spec-" + uuid.uuid4().hex + ".json")
     try:
+        progress("CREATE Rally environment for the configured user/project")
         write_json(spec_path, {"existing@openstack": platform})
         result = rally(
             cfg,
@@ -135,17 +139,16 @@ def register_environment(cfg, rc, runtime):
         spec_path.unlink(missing_ok=True)
 
 
+@watch()
 def prepare(cfg, rc, admin, cloud):
+    progress("CHECK configuration and local prerequisites")
     validate(cfg)
-    print(
-        (
-            "Prepare: project/user/roles, configured "
-            "quotas, network/subnet/router, Rally "
-            "environment"
-        ),
-        flush=True,
-    )
+    for key in ("state_dir", "results_dir"):
+        directory = pathlib.Path(cfg["execution"][key])
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        progress(f"READY directory: {directory}")
     project_id = ensure_identity(cfg, admin)
+    progress("CHECK authentication as the test user in the configured project")
     if cloud.project_id != project_id:
         raise InvalidError(
             "Test user did not authenticate into the configured project"
@@ -159,6 +162,7 @@ def prepare(cfg, rc, admin, cloud):
         / ("prepared-" + lock_key(cfg, rc) + ".json"),
         runtime,
     )
+    progress("OK preparation complete")
     return runtime
 
 
@@ -188,6 +192,7 @@ def run_one(cfg, config_path, scenario, admin, cloud, runtime):
     )
     print(f"Run {run_id}: {scenario}", flush=True)
     try:
+        progress("CHECK scenario prerequisites and API versions", scenario)
         checks = preflight(cfg, scenario, admin, cloud)
         runtime = dict(runtime, **checks)
         ledger.update(runtime=runtime, status="READY")
@@ -200,6 +205,7 @@ def run_one(cfg, config_path, scenario, admin, cloud, runtime):
                 "state_path": str(ledger.path.resolve()),
             },
         )
+        progress("VALIDATE Rally task", scenario)
         validated = rally(
             cfg,
             "task",
@@ -221,6 +227,7 @@ def run_one(cfg, config_path, scenario, admin, cloud, runtime):
                 "rally-validation.log"
             )
         log_path = ledger.path.parent / "rally.log"
+        progress("START Rally task; following live output", scenario)
         command = [
             "rally",
             "--plugin-paths",
@@ -243,6 +250,7 @@ def run_one(cfg, config_path, scenario, admin, cloud, runtime):
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
+                env=dict(os.environ, PYTHONUNBUFFERED="1"),
                 start_new_session=True,
             ) as process:
                 try:
@@ -282,6 +290,7 @@ def run_one(cfg, config_path, scenario, admin, cloud, runtime):
             tasks.stdout or "",
         )
         if len(ids) == 1:
+            progress("EXPORT Rally HTML and JSON reports", scenario)
             ledger.update(rally_task_id=ids[0])
             target = publish(cfg, ledger)
             reports = []
@@ -371,7 +380,9 @@ def execute_plugin(config_path, state_path, scenario, timer=None):
         _execute_plugin(config_path, state_path, scenario, timer)
 
 
+@watch()
 def _execute_plugin(config_path, state_path, scenario, timer=None):
+    progress("LOAD prepared run and authenticate", scenario)
     cfg = load(config_path)
     ledger = Ledger(state_path)
     if ledger.data["scenario"] != scenario or ledger.data[
@@ -513,6 +524,7 @@ def main(argv=None):
                 "Configuration valid (offline; cloud capabilities not checked)"
             )
             return 0
+        progress(f"LOAD admin OpenRC: {cfg['admin']['openrc']}", args.command)
         rc = openrc(cfg["admin"]["openrc"])
         admin, cloud = clouds(cfg, rc)
         if args.command == "check":

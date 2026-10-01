@@ -1,11 +1,16 @@
 """Offline acceptance-runner tests; no OpenStack credentials or resources."""
 
+import contextlib
 import copy
 import io
 import json
 import pathlib
+import selectors
+import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from unittest import mock
 
@@ -18,6 +23,7 @@ sys.path.insert(0, str(ROOT / "ultimum"))
 from ultimum_validation import cli  # noqa: E402
 from ultimum_validation import config  # noqa: E402
 from ultimum_validation import prepare  # noqa: E402
+from ultimum_validation import progress  # noqa: E402
 from ultimum_validation.cloud import APIError  # noqa: E402
 from ultimum_validation.cloud import Cloud  # noqa: E402
 from ultimum_validation.guest import Guest  # noqa: E402
@@ -624,6 +630,63 @@ class PrepareTest(RunnerCase):
                 0, cli.main(["--config", str(path), "check", "placement"])
             )
             provision.assert_not_called()
+
+
+class ProgressTest(RunnerCase):
+    def test_step_reports_start_completion_and_failure_and_keeps_events(self):
+        engine = self.engine()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            with engine.step("example operation"):
+                pass
+            with self.assertRaises(AssertionError):
+                with engine.step("failing operation"):
+                    raise AssertionError("private diagnostic")
+        text = output.getvalue()
+        self.assertIn("START example operation", text)
+        self.assertIn("OK example operation", text)
+        self.assertIn("FAIL failing operation", text)
+        self.assertNotIn("private diagnostic", text)
+        self.assertEqual(4, len(Ledger(self.ledger.path).data["events"]))
+
+    def test_long_operation_reports_heartbeat_and_thread_stops(self):
+        output = io.StringIO()
+        threads = set(threading.enumerate())
+        with contextlib.redirect_stdout(output):
+            progress.progress("Waiting for VM", "test")
+            with progress.watch(interval=0.01):
+                deadline = time.monotonic() + 2
+                while (
+                    "WAIT" not in output.getvalue()
+                    and time.monotonic() < deadline
+                ):
+                    time.sleep(0.01)
+        self.assertIn("Waiting for VM", output.getvalue())
+        self.assertIn("WAIT", output.getvalue())
+        self.assertEqual(threads, set(threading.enumerate()))
+
+    def test_progress_reaches_pipe_before_process_finishes_without_tty(self):
+        code = (
+            f"import sys; sys.path.insert(0, {str(ROOT / 'ultimum')!r}); "
+            "from ultimum_validation.progress import progress; "
+            "progress('ready', 'child'); input()"
+        )
+        with subprocess.Popen(
+            [sys.executable, "-c", code],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+        ) as child:
+            try:
+                with selectors.DefaultSelector() as selector:
+                    selector.register(child.stdout, selectors.EVENT_READ)
+                    self.assertTrue(
+                        selector.select(timeout=5), "Output buffered"
+                    )
+                self.assertIn("[child] ready", child.stdout.readline())
+                self.assertIsNone(child.poll())
+            finally:
+                child.communicate("\n", timeout=5)
 
 
 class CloudTest(unittest.TestCase):

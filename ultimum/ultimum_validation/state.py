@@ -10,6 +10,7 @@ import tempfile
 import threading
 
 from .config import InvalidError
+from .progress import progress
 
 
 def timestamp():
@@ -108,4 +109,4 @@ class Ledger:
                 {"time": timestamp(), "message": message}
             )
             self.save()
-        print(message, flush=True)
+        progress(message, self.data.get("scenario", "runner"))

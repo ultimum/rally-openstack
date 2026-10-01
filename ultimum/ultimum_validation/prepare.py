@@ -7,6 +7,7 @@ from .cloud import unique
 from .config import InvalidError
 from .config import UnsupportedError
 from .config import validate
+from .progress import progress
 
 
 def clouds(cfg, rc):
@@ -18,6 +19,7 @@ def clouds(cfg, rc):
 
 def ensure_identity(cfg, admin):
     identities = cfg["identity"]
+    progress("CHECK Keystone domains for the configured project and user")
     domains = admin.list("identity", "/domains", "domains")
     project_domain = unique(
         domains, identities["project"]["domain"], "domain"
@@ -26,6 +28,7 @@ def ensure_identity(cfg, admin):
     objects = {}
     for kind, domain in (("project", project_domain), ("user", user_domain)):
         options = identities[kind]
+        progress(f"LOOKUP {kind}: {options['name']}")
         matches = admin.list(
             "identity",
             "/" + kind + "s",
@@ -40,9 +43,13 @@ def ensure_identity(cfg, admin):
         ]
         if matches:
             obj = unique(matches, options["name"], kind)
+            progress(f"REUSE {kind}: {options['name']} ({obj['id']})")
             if not obj.get("enabled", True):
                 raise InvalidError(f"Configured {kind} is disabled")
             if kind == "user" and options["update_existing_password"]:
+                progress(
+                    "UPDATE existing test user password from configuration"
+                )
                 admin.request(
                     "identity",
                     "PATCH",
@@ -63,10 +70,13 @@ def ensure_identity(cfg, admin):
             }
             if kind == "user":
                 body["password"] = options["password"]
+            progress(f"CREATE {kind}: {options['name']}")
             obj = admin.post("identity", "/" + kind + "s", {kind: body})[kind]
+            progress(f"OK {kind}: {obj['id']}")
         objects[kind] = obj
     roles = admin.list("identity", "/roles", "roles")
     for name in identities["user"]["roles"]:
+        progress(f"ENSURE project role: {name}")
         role = unique(roles, name, "role")
         admin.request(
             "identity",
@@ -81,6 +91,7 @@ def ensure_identity(cfg, admin):
 def set_quotas(cfg, admin, project_id):
     quotas = cfg["quotas"]
     if not quotas["apply"]:
+        progress("SKIP quota changes: quotas.apply=false")
         return
     targets = {
         "nova": ("compute", "/os-quota-sets/", "quota_set"),
@@ -96,12 +107,14 @@ def set_quotas(cfg, admin, project_id):
                 raise InvalidError(
                     f"quotas.{name} values must be integers >= -1"
                 )
+            progress(f"APPLY {name} quotas: {quotas[name]}")
             admin.request(
                 service, "PUT", path + project_id, {key: quotas[name]}
             )
 
 
-def resolve_base(cfg, cloud):
+def resolve_base(cfg, cloud, scope="prepare"):
+    progress(f"RESOLVE image: {cfg['compute']['image']}", scope)
     image = unique(
         cloud.list("image", "/images", "images"),
         cfg["compute"]["image"],
@@ -109,10 +122,15 @@ def resolve_base(cfg, cloud):
     )
     if image.get("status") != "active":
         raise InvalidError("Configured image is not active")
+    progress(f"RESOLVE flavor: {cfg['compute']['flavor']}", scope)
     flavor = unique(
         cloud.list("compute", "/flavors/detail", "flavors"),
         cfg["compute"]["flavor"],
         "flavor",
+    )
+    progress(
+        f"RESOLVE external network: {cfg['network']['external_network']}",
+        scope,
     )
     external = unique(
         cloud.list("network", "/networks", "networks"),
@@ -172,6 +190,8 @@ def prepare_network(cfg, cloud, base):
     # Resolve every reference before creating anything in Neutron.
     existing = {}
     for kind in parts:
+        options = opts[parts[kind]]
+        progress(f"LOOKUP {kind}: {options['id'] or options['name']}")
         obj = find(kind)
         if not cfg["create_" + kind] and obj is None:
             raise InvalidError(
@@ -286,12 +306,16 @@ def prepare_network(cfg, cloud, base):
 
     def ensure(kind, values):
         if existing[kind]:
+            progress(f"REUSE {kind}: {existing[kind]['id']}")
             return existing[kind]
-        return cloud.post(
+        progress(f"CREATE {kind}: {values['name']}")
+        obj = cloud.post(
             "network",
             "/" + kind + "s",
             {kind: dict(values, description=managed)},
         )[kind]
+        progress(f"OK {kind}: {obj['id']}")
+        return obj
 
     network = ensure(
         "network",
@@ -307,6 +331,7 @@ def prepare_network(cfg, cloud, base):
         },
     )
     if cfg["create_router"] and not connected(router, subnet):
+        progress(f"CONNECT subnet {subnet['id']} to router {router['id']}")
         cloud.request(
             "network",
             "PUT",
@@ -317,6 +342,7 @@ def prepare_network(cfg, cloud, base):
         raise InvalidError(
             "Router has no interface in configured tenant subnet"
         )
+    progress("OK router connects the tenant subnet and external network")
     return dict(
         base,
         project_id=project_id,
@@ -361,7 +387,7 @@ def exclusive_host(admin, host, owned_ids=()):
 def preflight(cfg, scenario, admin, cloud):
     """Read-only checks; no resource creation and no privilege fallback."""
     validate(cfg, scenario)
-    info = resolve_base(cfg, cloud)
+    info = resolve_base(cfg, cloud, scenario)
     s = cfg["scenarios"][scenario]
     compute_version = (
         "2.64"  # Single-policy groups and UUID compute service IDs.
@@ -374,6 +400,7 @@ def preflight(cfg, scenario, admin, cloud):
         compute_version = "2.74"
     if scenario == "nova-shelve-unshelve":
         compute_version = "2.77"
+    progress(f"CHECK Nova API microversion >= {compute_version}", scenario)
     info["compute_max_version"] = admin.require_version(
         "compute", compute_version
     )
@@ -387,9 +414,11 @@ def preflight(cfg, scenario, admin, cloud):
             if scenario == "cinder-snapshot-revert"
             else "3.0"
         )
+        progress(f"CHECK Cinder API microversion >= {version}", scenario)
         info["volume_max_version"] = cloud.require_version("volume", version)
         info["volume_version"] = version
     if scenario == "nova-live-migration-tpm":
+        progress("CHECK TPM flavor extra specs", scenario)
         flavor = unique(
             cloud.list("compute", "/flavors/detail", "flavors"),
             cfg["compute"]["tpm_flavor"],
@@ -405,6 +434,7 @@ def preflight(cfg, scenario, admin, cloud):
         info["tpm_flavor_id"] = flavor["id"]
         info["tpm_extra_specs"] = specs
     if scenario in ("nova-drain", "masakari-host-failure"):
+        progress(f"CHECK dedicated host: {s['host']}", scenario)
         service = host_service(admin, s["host"])
         if service["state"] != "up" or service["status"] != "enabled":
             raise InvalidError(
@@ -431,6 +461,7 @@ def preflight(cfg, scenario, admin, cloud):
                 host["uuid"],
             )
     if scenario == "octavia-vip":
+        progress(f"CHECK Octavia provider: {s['provider']}", scenario)
         providers = cloud.list("lb", "/lbaas/providers", "providers")
         unique(providers, s["provider"], "Octavia provider")
     return info

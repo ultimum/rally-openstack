@@ -40,6 +40,9 @@ class Scenarios(Resources):
             return servers if isinstance(servers, list) else [servers]
 
         def inspect(servers, mode, policy):
+            self.ledger.event(
+                f"CHECK placement of {len(servers)} VMs ({mode})"
+            )
             hosts = [
                 self.describe(vm)["OS-EXT-SRV-ATTR:host"] for vm in servers
             ]
@@ -64,6 +67,9 @@ class Scenarios(Resources):
                 }
             )
             self.ledger.evidence("placement", distributions)
+            self.ledger.event(
+                f"OK host distribution: {dict(collections.Counter(hosts))}"
+            )
 
         for mode in s["submission_modes"]:
             with self.step("Placement Count batches: " + mode):
@@ -105,6 +111,7 @@ class Scenarios(Resources):
                 )
 
     def delete_server(self, server):
+        self.ledger.event(f"DELETE completed batch VM: {server['id']}")
         self.cloud.delete("compute", "/servers/" + server["id"])
         wait_for(
             lambda: self.cloud.absent("compute", "/servers/" + server["id"]),
@@ -174,6 +181,7 @@ class Scenarios(Resources):
 
     def nova_drain(self):
         s = self.options
+        self.ledger.event(f"CHECK dedicated drain host: {s['host']}")
         exclusive_host(self.admin, s["host"])
         active_vms = [
             self.vm(host=s["host"], label="drain-active")
@@ -479,6 +487,7 @@ class Scenarios(Resources):
         )
 
         def ready():
+            self.ledger.event(f"WAIT load balancer {lb['id']}: ACTIVE")
             return self.cloud.wait_status(
                 "lb",
                 "/lbaas/loadbalancers/" + lb["id"],
@@ -488,6 +497,9 @@ class Scenarios(Resources):
             )
 
         lb = ready()
+        self.ledger.event(
+            f"CREATE {s['protocol']} listener on port {s['vip_port']}"
+        )
         listener = self.cloud.post(
             "lb",
             "/lbaas/listeners",
@@ -501,6 +513,7 @@ class Scenarios(Resources):
             },
         )["listener"]
         ready()
+        self.ledger.event(f"CREATE backend pool: algorithm {s['algorithm']}")
         pool = self.cloud.post(
             "lb",
             "/lbaas/pools",
@@ -515,6 +528,9 @@ class Scenarios(Resources):
         )["pool"]
         ready()
         for address, _ in backends:
+            self.ledger.event(
+                f"ADD backend member: {address}:{s['backend_port']}"
+            )
             self.cloud.post(
                 "lb",
                 "/lbaas/pools/" + pool["id"] + "/members",
@@ -584,6 +600,7 @@ class Scenarios(Resources):
                     "VIP did not reach the required number of "
                     "distinct backends"
                 )
+            self.ledger.event(f"OK VIP backend responses: {dict(observed)}")
 
     def _vip_available(self, floating, port, markers):
         import requests
@@ -599,6 +616,9 @@ class Scenarios(Resources):
         volume = self.volume(size)
         self.attach(server, volume)
         device = guest.device(volume["id"], unmounted=True)
+        self.ledger.event(
+            f"FORMAT and mount test volume {volume['id']} at {mount}"
+        )
         guest.command(
             "sudo -n mkfs.ext4 -F "
             + q(device)
@@ -611,6 +631,9 @@ class Scenarios(Resources):
         )
         guest.write(mount + "/test.txt", content)
         guest.command("sync")
+        self.ledger.event(
+            "OK test data written and flushed to secondary volume"
+        )
         return server, volume, guest, device
 
     def cinder_snapshot_revert(self):
@@ -644,6 +667,9 @@ class Scenarios(Resources):
         self.attach(server, volume)
         device = guest.device(volume["id"])
         guest.command("sudo -n mount " + q(device) + " " + q(s["mount_path"]))
+        self.ledger.event(
+            "WRITE changed data after snapshot and verify it via SSH"
+        )
         guest.write(s["mount_path"] + "/test.txt", s["after_content"])
         if (
             guest.command("sudo -n cat " + q(s["mount_path"] + "/test.txt"))
@@ -672,6 +698,7 @@ class Scenarios(Resources):
         self.attach(server, volume)
         device = guest.device(volume["id"])
         guest.command("sudo -n mount " + q(device) + " " + q(s["mount_path"]))
+        self.ledger.event("CHECK restored file contents via SSH after revert")
         value = guest.command(
             "sudo -n cat " + q(s["mount_path"] + "/test.txt")
         )
@@ -708,6 +735,9 @@ class Scenarios(Resources):
             "Extend attached volume, verify kernel "
             "capacity and grow ext4 online"
         ):
+            self.ledger.event(
+                f"EXTEND attached volume to {s['target_size_gib']} GiB"
+            )
             self.cloud.post(
                 "volume",
                 "/volumes/" + volume["id"] + "/action",
@@ -747,6 +777,9 @@ class Scenarios(Resources):
                 self.timeout,
                 description="guest block device growth",
             )
+            self.ledger.event(
+                "RESIZE ext4 via SSH and verify filesystem size/data"
+            )
             guest.command(
                 "sudo -n resize2fs " + q(device), timeout=self.timeout
             )
@@ -774,6 +807,7 @@ class Scenarios(Resources):
 
     def masakari_host_failure(self):
         s = self.options
+        self.ledger.event(f"CHECK dedicated Masakari host: {s['host']}")
         exclusive_host(self.admin, s["host"])
         vms = [
             self.vm(host=s["host"], label="masakari")
@@ -818,6 +852,9 @@ class Scenarios(Resources):
         )
         started = json.loads(marker.read_text())["epoch"]
         self.ledger.update(status="RUNNING")
+        self.ledger.event(
+            "WAIT Nova service down, Masakari maintenance and VM recovery"
+        )
         deadline = started + s["recovery_timeout_seconds"]
         observed_down, observed_maintenance = False, False
 
@@ -932,6 +969,9 @@ class Scenarios(Resources):
                 self.timeout,
             )
         actual = self.describe(server)["OS-EXT-AZ:availability_zone"]
+        self.ledger.event(
+            f"CHECK unshelved VM AZ: {actual}, expected {s['target_az']}"
+        )
         self.ledger.evidence(
             "unshelve", {"requested_az": s["target_az"], "actual_az": actual}
         )

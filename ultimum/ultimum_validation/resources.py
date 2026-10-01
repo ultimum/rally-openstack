@@ -3,6 +3,7 @@
 import base64
 import contextlib
 import pathlib
+import time
 import uuid
 
 import requests
@@ -13,6 +14,7 @@ from .config import InvalidError
 from .guest import Guest
 from .guest import q
 from .prepare import host_service
+from .progress import watch
 
 
 class Resources:
@@ -33,18 +35,28 @@ class Resources:
 
     @contextlib.contextmanager
     def step(self, message):
-        self.ledger.event(message)
-        if self.timer:
-            with self.timer(message):
+        self.ledger.event("START " + message)
+        started = time.monotonic()
+        try:
+            if self.timer:
+                with self.timer(message):
+                    yield
+            else:
                 yield
+        except BaseException as exc:
+            self.ledger.event(f"FAIL {message} ({type(exc).__name__})")
+            raise
         else:
-            yield
+            self.ledger.event(
+                f"OK {message} ({time.monotonic() - started:.1f}s)"
+            )
 
     def name(self, suffix):
         prefix = self.cfg["resources_prefix"]
         return f"{prefix}-{self.run_id}-{suffix}-{uuid.uuid4().hex[:6]}"
 
     def create(self, service, collection, key, values):
+        self.ledger.event(f"CREATE {key}: {values.get('name', collection)}")
         # Persist a unique searchable marker before POST, covering a lost
         # response.
         if service in ("network", "lb"):
@@ -82,6 +94,7 @@ class Resources:
         with self.ledger.lock:
             intent["resolved"] = True
             self.ledger.save()
+        self.ledger.event(f"OK {key}: {obj['id']}")
         return obj
 
     def access(self):
@@ -173,13 +186,18 @@ class Resources:
             if value:
                 values[key] = value
         volume = self.create("volume", "/volumes", "volume", values)
-        return self.cloud.wait_status(
+        self.ledger.event(
+            f"WAIT volume {volume['id']}: available ({size} GiB)"
+        )
+        result = self.cloud.wait_status(
             "volume",
             "/volumes/" + volume["id"],
             "volume",
             {"available"},
             self.timeout,
         )
+        self.ledger.event(f"OK volume {volume['id']}: available")
+        return result
 
     def server(
         self,
@@ -242,6 +260,7 @@ class Resources:
             body["os:scheduler_hints"] = {"group": group}
         if count > 1:
             values["return_reservation_id"] = True
+        self.ledger.event(f"CREATE VM: {values['name']}, Count={count}")
         response = self.cloud.post("compute", "/servers", body)
         if count > 1:
             reservation = response["reservation_id"]
@@ -289,6 +308,7 @@ class Resources:
             )
         result = []
         for obj in servers:
+            self.ledger.event(f"WAIT VM {obj['id']}: ACTIVE")
             server = self.cloud.wait_status(
                 "compute",
                 "/servers/" + obj["id"],
@@ -306,13 +326,14 @@ class Resources:
                     kind="volume",
                 )
             result.append(server)
+            self.ledger.event(f"OK VM {obj['id']}: ACTIVE")
         return result if count > 1 else result[0]
 
     def describe(self, server):
         return self.admin.get("compute", "/servers/" + server["id"])["server"]
 
     def floating(self, port_id):
-        return self.create(
+        floating = self.create(
             "network",
             "/floatingips",
             "floatingip",
@@ -322,6 +343,11 @@ class Resources:
                 "description": "Ultimum run " + self.run_id,
             },
         )
+        self.ledger.event(
+            f"OK floating IP {floating['floating_ip_address']} "
+            f"-> port {port_id}"
+        )
+        return floating
 
     def vm(self, **kwargs):
         port = kwargs.pop("port", None) or self.port()
@@ -338,13 +364,16 @@ class Resources:
             self.ledger,
         ).connect()
         self.guests.append(guest)
+        self.ledger.event(f"WAIT cloud-init via SSH on VM {server['id']}")
         guest.command(
             "sudo -n cloud-init status --wait",
             self.cfg["guest"]["cloud_init_timeout_seconds"],
         )
+        self.ledger.event(f"OK cloud-init on VM {server['id']}")
         return guest
 
     def action(self, server, body, actor=None):
+        self.ledger.event(f"ACTION VM {server['id']}: {', '.join(body)}")
         (actor or self.cloud).post(
             "compute", "/servers/" + server["id"] + "/action", body
         )
@@ -444,9 +473,11 @@ class Resources:
                 "az": after["OS-EXT-AZ:availability_zone"],
             },
         )
+        self.ledger.event(f"OK migration: VM {server['id']} on {target}")
         return after
 
     def attach(self, server, volume):
+        self.ledger.event(f"ATTACH volume {volume['id']} to VM {server['id']}")
         self.cloud.post(
             "compute",
             "/servers/" + server["id"] + "/os-volume_attachments",
@@ -461,6 +492,9 @@ class Resources:
         )
 
     def detach(self, server, volume):
+        self.ledger.event(
+            f"DETACH volume {volume['id']} from VM {server['id']}"
+        )
         self.cloud.delete(
             "compute",
             "/servers/"
@@ -477,6 +511,7 @@ class Resources:
         )
 
     def webserver(self, guest, content, port):
+        self.ledger.event(f"START guest HTTP service on port {port}")
         guest.tools("python3")
         guest.command("sudo -n mkdir -p /var/lib/ultimum-http")
         guest.write("/var/lib/ultimum-http/index.html", content)
@@ -547,6 +582,9 @@ class Resources:
         for item in self.ledger.data["restore"]:
             if item["done"]:
                 continue
+            self.ledger.event(
+                f"RESTORE original service state: {item['host']}"
+            )
             service = host_service(self.admin, item["host"])
             if service["state"] != "up":
                 raise InvalidError(
@@ -629,7 +667,11 @@ class Resources:
             # Keep unresolved intents searchable on later cleanup attempts:
             # an accepted create may still be asynchronous at this point.
 
+    @watch()
     def cleanup(self):
+        self.ledger.event(
+            "START cleanup: reconcile and remove run-owned resources"
+        )
         if self.cloud.project_id != self.ledger.data["project_id"]:
             raise InvalidError("Cleanup project differs from the run ledger")
         self.close()
@@ -678,6 +720,7 @@ class Resources:
         ):
             if obj["deleted"]:
                 continue
+            self.ledger.event(f"DELETE {obj['kind']}: {obj['id']}")
             try:
                 path = obj["path"] + (
                     "?cascade=true" if obj["kind"] == "loadbalancer" else ""
@@ -695,6 +738,7 @@ class Resources:
                 )
                 obj["deleted"] = True
                 self.ledger.save()
+                self.ledger.event(f"OK deleted {obj['kind']}: {obj['id']}")
             except Exception as exc:
                 errors.append(f"{obj['kind']} {obj['id']}: {exc}")
         try:
@@ -711,4 +755,10 @@ class Resources:
             self.ledger.data.pop("cleanup_error", None)
             self.ledger.save()
         if errors:
+            self.ledger.event(
+                "FAIL cleanup: some resources or restoration remain"
+            )
             raise InvalidError("Cleanup incomplete: " + "; ".join(errors))
+        self.ledger.event(
+            "OK cleanup complete; shared resources retained"
+        )
