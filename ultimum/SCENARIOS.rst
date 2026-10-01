@@ -38,9 +38,11 @@ Set the test user's password, image, flavor, external network and
 sees for connections from the runner; with NAT, it may differ from the
 container's IP. The container must have a route to the floating IPs under
 test. The image must provide cloud-init, SSH, passwordless sudo and an
-Ubuntu/systemd environment. Additional tools are python3, curl, e2fsprogs
-and, for TPM, tpm2-tools; ``guest.install_missing_packages`` permits their
-installation through apt.
+Ubuntu/systemd environment. Additional tools are python3, curl and e2fsprogs;
+``guest.install_missing_packages`` permits their installation through apt
+over SSH. The TPM scenario always installs tpm2-tools through cloud-init,
+independently of this flag. Package installation requires working DNS and
+access to the Ubuntu package repositories from the guest.
 
 OpenStack TLS configuration
 ---------------------------
@@ -436,7 +438,19 @@ storage.availability_zone=null for placement, otherwise the test is UNSUPPORTED.
 
 1. Resolves tpm_flavor and verifies hw:tpm_version=2.0. Leaves the flavor intact.
 2. Creates its own VM with this flavor, a port, floating IP and SSH access.
-3. Checks for tpm2-tools and installs them if allowed by the guest configuration.
+   Supplies cloud-init user-data to refresh package metadata and install
+   tpm2-tools on first boot, even when ``guest.install_missing_packages`` is
+   false::
+
+       #cloud-config
+       package_update: true
+       packages:
+         - tpm2-tools
+
+3. Waits for ``cloud-init status --wait`` over SSH, using
+   ``guest.cloud_init_timeout_seconds``, then verifies that the TPM tools are
+   available. A cloud-init failure stops the scenario before any TPM operation
+   or migration.
 4. Defines an NV index and writes exactly payload_bytes random bytes, 32 by
    default. Does not put shorter text into a larger unchecked buffer.
 5. Migrates the VM to another host in the same AZ and verifies the host/ACTIVE.

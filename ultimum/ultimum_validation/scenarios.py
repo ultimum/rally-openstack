@@ -135,8 +135,15 @@ class Scenarios(Resources):
 
     def nova_live_migration_tpm(self):
         s = self.options
-        server, _, _, guest = self.vm(flavor=self.runtime["tpm_flavor_id"])
-        guest.tools("tpm2-tools")
+        userdata = "#cloud-config\n" + yaml.safe_dump(
+            {"package_update": True, "packages": ["tpm2-tools"]}
+        )
+        with self.step("Create vTPM VM and install tpm2-tools via cloud-init"):
+            # vm() waits for cloud-init to finish before returning the guest.
+            server, _, _, guest = self.vm(
+                flavor=self.runtime["tpm_flavor_id"], userdata=userdata
+            )
+            guest.tools("tpm2-tools")
         payload = os.urandom(s["payload_bytes"])
         index = str(int(s["nv_index"], 0))
         with self.step("Define TPM NV index and write exact binary payload"):

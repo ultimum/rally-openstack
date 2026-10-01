@@ -1,5 +1,6 @@
 """Offline acceptance-runner tests; no OpenStack credentials or resources."""
 
+import base64
 import contextlib
 import copy
 import io
@@ -1051,6 +1052,81 @@ class CloudTest(unittest.TestCase):
             cloud.post("compute", "/servers", {})
         self.assertIn("req-123", str(ctx.exception))
         self.assertNotIn("private", str(ctx.exception))
+
+
+class TPMCloudInitTest(RunnerCase):
+    def setUp(self):
+        super().setUp()
+        self.cfg["compute"]["boot_from_volume"] = False
+        self.runtime["tpm_flavor_id"] = "tpm-flavor"
+        self.engine = self.engine()
+        self.engine.options = self.cfg["scenarios"]["nova-live-migration-tpm"]
+        self.engine.access = mock.Mock()
+        self.engine.keypair = self.runtime["keypair_name"]
+        self.engine.ssh_group = "ssh-group"
+        self.engine.port = mock.Mock(return_value={"id": "port"})
+        self.engine.floating = mock.Mock(
+            return_value={"floating_ip_address": "192.0.2.2"}
+        )
+        self.engine.verify_ssh_access = mock.Mock()
+        self.engine.migrate = mock.Mock()
+        self.cloud.post.return_value = {"server": {"id": "server"}}
+        self.cloud.wait_status.return_value = {"id": "server"}
+        self.guest = Guest(
+            "192.0.2.2", "server", self.cfg["guest"], self.ledger
+        )
+        self.guest.connect = mock.Mock(return_value=self.guest)
+        self.guest.command = mock.Mock()
+        patcher = mock.patch(
+            "ultimum_validation.resources.Guest", return_value=self.guest
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_tpm_installs_via_cloud_init_before_tools_and_migration(self):
+        payload = bytes(range(self.engine.options["payload_bytes"]))
+        commands = []
+
+        def command(value, *args, **kwargs):
+            if value == "command -v tpm2_nvdefine":
+                self.assertIn("sudo -n cloud-init status --wait", commands)
+            commands.append(value)
+            if value.startswith("sudo -n tpm2_nvread"):
+                return base64.b64encode(payload).decode()
+            return ""
+
+        self.guest.command.side_effect = command
+        self.assertFalse(self.cfg["guest"]["install_missing_packages"])
+        with mock.patch("ultimum_validation.scenarios.os") as random:
+            random.urandom.return_value = payload
+            self.engine.nova_live_migration_tpm()
+        body = self.cloud.post.call_args.args[2]["server"]
+        userdata = base64.b64decode(body["user_data"]).decode()
+        self.assertTrue(userdata.startswith("#cloud-config\n"))
+        cloud_config = yaml.safe_load(userdata)
+        self.assertTrue(cloud_config["package_update"])
+        self.assertIn("tpm2-tools", cloud_config["packages"])
+        self.assertEqual("tpm-flavor", body["flavorRef"])
+        self.guest.command.assert_any_call(
+            "sudo -n cloud-init status --wait",
+            self.cfg["guest"]["cloud_init_timeout_seconds"],
+        )
+        self.assertFalse(any("apt-get" in c for c in commands))
+        self.engine.migrate.assert_called_once_with(
+            {"id": "server"}, self.engine.options["target_host"]
+        )
+        self.assertTrue(self.ledger.data["evidence"]["tpm"]["identical"])
+
+    def test_cloud_init_failure_stops_tpm_operations_and_migration(self):
+        self.guest.command.side_effect = AssertionError("cloud-init failed")
+        with self.assertRaisesRegex(AssertionError, "cloud-init failed"):
+            self.engine.nova_live_migration_tpm()
+        self.guest.command.assert_called_once_with(
+            "sudo -n cloud-init status --wait",
+            self.cfg["guest"]["cloud_init_timeout_seconds"],
+        )
+        self.engine.migrate.assert_not_called()
+        self.assertNotIn("tpm", self.ledger.data["evidence"])
 
 
 class ScenarioTest(RunnerCase):

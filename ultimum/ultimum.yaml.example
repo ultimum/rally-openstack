@@ -171,8 +171,10 @@ guest:
   ssh_port: 22
   ssh_timeout_seconds: 300
   cloud_init_timeout_seconds: 600
-  # Recommended: an image with tpm2-tools, curl and e2fsprogs preinstalled.
-  # true allows installing missing tools; requires DNS and repository access.
+  # Recommended: an image with python3, curl and e2fsprogs preinstalled.
+  # true allows installing missing tools over SSH.
+  # The TPM scenario always installs tpm2-tools through cloud-init, even when
+  # this flag is false. Package installation needs DNS and repository access.
   install_missing_packages: false
 
 execution:
