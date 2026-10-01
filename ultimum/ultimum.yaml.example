@@ -1,0 +1,271 @@
+# Ultimum acceptance runner - annotated configuration.
+# Location: /etc/rally/ultimum.yaml, permissions 0600.
+# null means automatic selection only where explicitly documented.
+# Image/flavor/network values are examples; adjust them before running.
+schema_version: 1
+
+# Shared prefix for new resources, e.g. e2e-<run_uuid>-vm-... .
+# With create_*=true and name=null, use e2e-project, e2e-user,
+# e2e-net, e2e-subnet and e2e-router. Explicit names override the prefix.
+resources_prefix: e2e
+
+# true = create if missing; repeated prepare calls reuse the resource.
+# false = require an existing resource with an explicit name (or network id).
+# With false, names are NOT generated from the prefix; missing resources fail.
+create_project: true
+create_user: true
+create_network: true
+create_subnet: true
+create_router: true
+
+admin:
+  # The runner sources this trusted shell file on each invocation.
+  # Reads OS_AUTH_URL, admin credentials, domains, region, endpoint and TLS.
+  openrc: /etc/rally/admin.rc
+
+identity:
+  # The project and user persist between runs; cleanup does not delete them.
+  project:
+    name: null               # With create_project=false, e.g. ultimum.
+    domain: Default
+  user:
+    name: null               # Existing user when create_user=false.
+    domain: Default
+    password: CHANGE_ME
+    # Keep the existing password; failed authentication stops preparation.
+    update_existing_password: false
+    roles: [member]
+
+rally:
+  # Separate deployment with one predefined user/project.
+  # Selected explicitly; leaves the active deployment for other commands intact.
+  deployment_name: ultimum-validation
+  task_dir: /opt/rally-openstack/tasks/ultimum/scenarios
+  plugin_dir: /opt/ultimum/plugins
+
+quotas:
+  # Disabled for now: final default values must be supplied by the operator.
+  # With apply=true, set only the listed keys for the test project.
+  apply: false
+  nova: {}
+    # instances: ...            # VM count, including concurrent batches.
+    # cores: ...                # Total vCPU count.
+    # ram: ...                  # RAM in MiB.
+    # server_groups: ...
+    # server_group_members: ...
+  cinder: {}
+    # volumes: ...
+    # snapshots: ...
+    # gigabytes: ...
+  neutron: {}
+    # network: ...
+    # subnet: ...
+    # router: ...
+    # port: ...
+    # floatingip: ...
+    # security_group: ...
+    # security_group_rule: ...
+  octavia: {}
+    # load_balancer: ...
+    # listener: ...
+    # pool: ...
+    # member: ...
+    # health_monitor: ...
+
+compute:
+  image: ubuntu-24.04          # Unique cloud image name or UUID.
+  flavor: m1.small            # Unique flavor name or UUID.
+  tpm_flavor: null            # Required for the vTPM test.
+  # When null, omit the global AZ from API requests and let the cloud select it.
+  availability_zone: null
+  boot_from_volume: true
+  root_volume_size_gib: 10
+  # VMs and other project resources are always created by identity.user.
+  # Admin performs privileged migration; test_user checks the user's policy.
+  # A 403 response never triggers an automatic fallback to admin.
+  migration_actor: admin     # admin | test_user
+
+storage:
+  # null = use the cloud's default type/AZ; Nova and Cinder AZ names may differ.
+  volume_type: null
+  availability_zone: null
+
+network:
+  # Resource creation is controlled by create_network/subnet/router above.
+  # When false, only resolve and validate; names must be unique in the project.
+  # With create_router=false, the router must already connect to the subnet.
+  external_network: null      # Required name/UUID for floating IP scenarios.
+  tenant_network:
+    name: null               # Set name or id when create_network=false.
+    id: null                 # Existing resource UUID; requires create=false.
+  subnet:
+    name: null               # Set name or id when create_subnet=false.
+    id: null
+    cidr: 10.240.0.0/24
+    # Internal subnet gateway, separate from the router's external IP and FIPs.
+    gateway_ip: 10.240.0.1
+    enable_dhcp: true
+    allocation_pool_start: 10.240.0.100
+    allocation_pool_end: 10.240.0.220
+    dns_nameservers: []       # Set internal DNS servers if needed.
+  router:
+    name: null               # With create_router=false, e.g. ultimumrouter.
+    id: null
+    enable_snat: true
+    # Router's external subnet/IP; null = allocated automatically by Neutron.
+    external_subnet: null
+    external_fixed_ip: null
+  # Actual source CIDR seen by the cloud for the runner's SSH/ICMP/HTTP probes.
+  # Set before network tests, e.g. a specific routed IP/32.
+  probe_source_cidr: null
+
+guest:
+  ssh_username: ubuntu
+  # Keys mounted into the container; import the public key into the run keypair.
+  ssh_private_key: /etc/rally/keys/ultimum
+  ssh_public_key: /etc/rally/keys/ultimum.pub
+  ssh_port: 22
+  ssh_timeout_seconds: 300
+  cloud_init_timeout_seconds: 600
+  # Recommended: an image with tpm2-tools, curl and e2fsprogs preinstalled.
+  # true allows installing missing tools; requires DNS and repository access.
+  install_missing_packages: false
+
+execution:
+  # Each task has its own run_id, included in resource names and metadata.
+  results_dir: /data/ultimum/results
+  state_dir: /data/ultimum/state
+  cleanup: on-success        # always | on-success | never
+  # Prevents concurrent tests from conflicting on fixed IPs and host operations.
+  project_lock: true
+  api_timeout_seconds: 600
+  # Repeats measurements only; placement configures its own VM batches.
+  repetitions: 1
+
+scenarios:
+  placement:
+    enabled: true
+    # Test the same counts serially and in parallel (up to 40 concurrent VMs).
+    batch_sizes: [10, 20, 10]
+    submission_modes: [serial, parallel]
+    group_policy: null       # null | affinity | anti-affinity | soft variants
+    anti_affinity_count: 2   # Separate group; requires >=2 suitable hosts.
+    # null = no explicit AZ; let the scheduler decide.
+    availability_zone: null
+    # Empty = report placement only; otherwise enforce the allowed host list.
+    allowed_hosts: []
+
+  nova-live-migration:
+    enabled: true
+    target_host: null        # Select another available host in the same AZ.
+    same_availability_zone: true
+    # Shared-storage migration only; block migration is out of scope.
+    block_migration: false
+    ping_interval_seconds: 0.2
+    max_lost_packets: 5      # Proposed threshold; adjust to requirements.
+    ssh_heartbeat_interval_seconds: 0.2
+    max_ssh_gap_seconds: 1.0
+    require_same_ssh_connection: true
+
+  nova-live-migration-tpm:
+    enabled: true
+    target_host: null
+    # Create a dedicated VM with compute.tpm_flavor; leave the flavor unchanged.
+    nv_index: '0x1500016'
+    # Write exactly 32 random bytes; compare all 32 bytes after migration.
+    payload_bytes: 32
+    verify_key_creation: true
+
+  nova-drain:
+    enabled: false           # Enable explicitly on a dedicated test host.
+    host: null               # A specific hypervisor is required.
+    active_instances: 2
+    stopped_instances: 1
+    # Stop before disabling/migrating if the host has unrelated VMs.
+    require_exclusive_test_host: true
+    max_parallel_migrations: 1
+    restore_original_service_state: true
+
+  nova-cloud-init:
+    enabled: true
+    verify_metadata_endpoint: true
+    config_drive: false      # Test the network metadata service, not config-drive.
+    username: testuser
+    file_path: /cloud.test
+    file_content: Cloud-init test is successful
+
+  neutron-dhcp:
+    enabled: true
+    # Fixed IP for a run-owned port, inside the test CIDR and outside the pool.
+    fixed_ip: 10.240.0.20
+    # Check the guest DHCP lease/network config as well as the Neutron API IP.
+    require_dhcp_lease: true
+
+  neutron-security-group:
+    enabled: true
+    http_port: 80
+    propagation_timeout_seconds: 60
+    # Test: allow -> new HTTP request succeeds -> deny -> new request fails
+    # -> allow again -> request succeeds; SSH stays on a separate SG.
+    verify_allow_after_deny: true
+
+  octavia-vip:
+    enabled: true
+    provider: ovn
+    # Backends serve VM1/VM2 HTTP content through a TCP listener.
+    protocol: TCP
+    algorithm: SOURCE_IP_PORT
+    backend_count: 2
+    backend_port: 80
+    vip_port: 80
+    # Each request uses a new TCP connection. OVN need not alternate A/B.
+    probe_connections: 100
+    required_backends_seen: 2
+    provisioning_timeout_seconds: 600
+
+  cinder-snapshot-revert:
+    enabled: true
+    volume_size_gib: 5
+    filesystem: ext4
+    # Find the disk by the test volume UUID/serial, never by a fixed sdb path.
+    device_selection: volume_id
+    mount_path: /mnt/ultimum-revert
+    before_content: Before snapshot
+    after_content: After snapshot
+    # Unmount/flush before snapshot; detach and wait for available before revert.
+
+  cinder-volume-extend:
+    enabled: true
+    initial_size_gib: 5
+    target_size_gib: 10
+    online: true
+    filesystem: ext4
+    device_selection: volume_id
+    mount_path: /mnt/ultimum-extend
+    file_content: Volume extend test
+
+  masakari-host-failure:
+    enabled: false           # Active fault test; never enabled by default.
+    host: null               # Dedicated host with no unrelated VMs.
+    segment: null            # Verify the registered Masakari segment.
+    instance_count: 2
+    require_exclusive_test_host: true
+    fault_mode: manual       # First version: operator physically powers off host.
+    recovery_timeout_seconds: 300
+    # VMs have no TPM; evacuation support for TPM must not be assumed.
+    # Restore original states only after the physical host is available again.
+    restore_original_service_state: true
+
+  nova-shelve-unshelve:
+    enabled: true
+    source_az: null          # Both AZs must be set explicitly for this test.
+    target_az: null
+    require_shelved_offloaded: true
+    expected_target_az: true # A different resulting AZ means FAIL, never success.
+    data_path: /shelve.test
+    data_content: shelve unshelve test data
+
+# Excludes block migration, regular live migration across AZs and Cinder
+# backup/restore. The scope of the isolation test still needs clarification.
+# API versions are discovered by check: revert >=3.40, online extend >=3.42,
+# unshelve to a chosen AZ >=2.77 + SHELVED_OFFLOADED; vTPM/OVN depend on the cloud.

@@ -1,0 +1,5 @@
+# Additional direct dependencies of the isolated Ultimum acceptance runner.
+PyYAML>=6.0
+requests>=2.31.0
+keystoneauth1>=5.0.0
+paramiko>=3.0.0
