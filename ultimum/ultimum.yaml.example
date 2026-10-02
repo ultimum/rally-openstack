@@ -46,6 +46,8 @@ tls:
 
 identity:
   # The project and user persist between runs; cleanup does not delete them.
+  # Host scenarios assign the admin OpenRC user an admin role in this project
+  # during prepare; the configured test user keeps its separate roles below.
   project:
     name: null               # With create_project=false, e.g. ultimum.
     domain: Default

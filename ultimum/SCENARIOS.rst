@@ -275,7 +275,12 @@ arguments; the test user's credentials are stored in the Rally database.
 Protect the configuration, database and state directory.
 
 ``prepare`` reports each lookup, creation, reuse, role assignment, quota
-decision and connection check. Scenarios print timestamped operations,
+decision and connection check. When ``nova-drain`` or ``nova-evacuate`` is
+enabled, it also assigns the ``admin`` role to the existing admin OpenRC user
+in the configured test project. This persistent project role assignment is
+idempotent. The configured test user keeps its separate member role.
+``check`` remains read-only, so run ``prepare`` before checking a newly
+configured host scenario. Scenarios print timestamped operations,
 resource IDs, VM readiness, SSH connection and cloud-init progress, check
 results and cleanup. Long operations emit a waiting message approximately
 every 15 seconds while preparation/the scenario/cleanup is active. Output is
@@ -476,16 +481,15 @@ is not converted to PASS. Regular TPM evacuation is outside the Masakari test.
    requesting the selected host and its availability zone. The runner obtains
    a token for the **existing admin OpenRC user scoped to the configured test
    project** and uses it only for host-directed Nova server creation. This
-   admin user must already have the ``admin`` role assigned in that project;
-   the runner does not grant a new role. An operator can assign it with
-   ``openstack role add --user ADMIN --project TEST_PROJECT admin``. Test-user
-   ports and boot volumes stay in that project. Cloud-init installs the test
-   SSH public key because Nova keypairs belong to a user; these VMs have no
-   Nova keypair. The configured test user can remain ``member``. Verifies actual
-   host/AZ and project ownership. If the test user already has an ``admin``
+   admin user receives the ``admin`` role in that project during ``prepare``
+   when the scenario is enabled. Test-user ports and boot volumes stay in that
+   project. Cloud-init installs the test SSH public key because Nova keypairs
+   belong to a user; these VMs have no Nova keypair. The configured test user
+   can remain ``member``. The runner verifies actual host/AZ and project
+   ownership. If the test user already has an ``admin``
    role assignment, the scenario stops before creating resources; remove that
-   assignment in Keystone first. Removing ``admin`` from the YAML alone does
-   not revoke a role that ``prepare`` assigned earlier.
+   assignment in Keystone first. Changing the YAML does not revoke an existing
+   role assignment.
 3. Optionally creates ``stopped_instances`` (default zero), writes a
    verification file over SSH, stops each VM and waits for SHUTOFF. Prepares
    floating IPs and SSH for all active VMs.
@@ -724,8 +728,8 @@ Add this section under the existing ``scenarios`` mapping in the mounted YAML::
    also checks for another available host in their AZ before asking for the
    outage. The runner scopes the existing admin OpenRC user to the configured
    test project for host-directed VM creation, as with ``nova-drain``. The
-   test user remains ``member``; the admin user needs an existing ``admin``
-   role assignment in the test project. Cloud-init installs the test SSH key.
+   test user remains ``member``; ``prepare`` assigns the ``admin`` role to the
+   admin OpenRC user in the test project. Cloud-init installs the test SSH key.
 2. Run ``ultimum-rally run nova-evacuate``. The runner creates volume-backed
    VMs on the dedicated host, verifies their placement, writes persistent
    data and prints the Ultimum run UUID. It enters ``WAITING_FOR_FAULT`` and

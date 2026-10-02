@@ -38,13 +38,13 @@ def project_scoped_admin(admin, project_id):
         access = cloud.session.auth.get_access(cloud.session)
     except Exception as exc:
         raise InvalidError(
-            "Admin OpenRC user needs an admin role assignment in the "
-            "configured test project to place drain VMs"
+            "Cannot authenticate the admin OpenRC user in the configured "
+            "test project; check its admin role assignment and OpenRC scope"
         ) from exc
     if cloud.project_id != project_id or "admin" not in access.role_names:
         raise InvalidError(
             "Admin OpenRC user needs an admin role in the configured "
-            "test project to place drain VMs"
+            "test project to place host test VMs"
         )
     return cloud
 
@@ -107,14 +107,33 @@ def ensure_identity(cfg, admin):
             progress(f"OK {kind}: {obj['id']}")
         objects[kind] = obj
     roles = admin.list("identity", "/roles", "roles")
-    for name in identities["user"]["roles"]:
-        progress(f"ENSURE project role: {name}")
-        role = unique(roles, name, "role")
+    assignments = [
+        (objects["user"]["id"], name, "test user")
+        for name in identities["user"]["roles"]
+    ]
+    if any(
+        cfg["scenarios"][name]["enabled"]
+        for name in ("nova-drain", "nova-evacuate")
+    ):
+        admin_user_id = admin.session.get_user_id()
+        if not admin_user_id:
+            raise InvalidError("Cannot identify the admin OpenRC user")
+        if admin_user_id == objects["user"]["id"]:
+            raise InvalidError(
+                "Admin OpenRC user must differ from the configured test user"
+            )
+        assignments.append((admin_user_id, "admin", "admin OpenRC user"))
+    assignments = [
+        (user_id, unique(roles, name, "role")["id"], name, label)
+        for user_id, name, label in assignments
+    ]
+    for user_id, role_id, name, label in assignments:
+        progress(f"ENSURE project role for {label}: {name}")
         admin.request(
             "identity",
             "PUT",
             "/projects/{}/users/{}/roles/{}".format(
-                objects["project"]["id"], objects["user"]["id"], role["id"]
+                objects["project"]["id"], user_id, role_id
             ),
         )
     return objects["project"]["id"]

@@ -983,6 +983,86 @@ class PrepareTest(RunnerCase):
             "identity", "PUT", "/projects/project/users/user/roles/role"
         )
 
+    def test_host_scenarios_assign_project_admin_role_to_openrc_user(self):
+        records = {
+            "/domains": [{"id": "domain", "name": "Default"}],
+            "/projects": [
+                {
+                    "id": "project",
+                    "name": self.cfg["identity"]["project"]["name"],
+                    "domain_id": "domain",
+                }
+            ],
+            "/users": [
+                {
+                    "id": "test-user",
+                    "name": self.cfg["identity"]["user"]["name"],
+                    "domain_id": "domain",
+                }
+            ],
+            "/roles": [
+                {"id": "member-role", "name": "member"},
+                {"id": "admin-role", "name": "admin"},
+            ],
+        }
+        self.admin.list.side_effect = lambda service, path, key, **kwargs: (
+            records[path]
+        )
+        self.admin.session.get_user_id.return_value = "openrc-admin"
+        for scenario in ("nova-drain", "nova-evacuate"):
+            with self.subTest(scenario=scenario):
+                self.cfg["scenarios"][scenario]["enabled"] = True
+                self.admin.request.reset_mock()
+                self.assertEqual(
+                    "project", prepare.ensure_identity(self.cfg, self.admin)
+                )
+                self.assertEqual(
+                    [
+                        mock.call(
+                            "identity",
+                            "PUT",
+                            "/projects/project/users/test-user/roles/"
+                            "member-role",
+                        ),
+                        mock.call(
+                            "identity",
+                            "PUT",
+                            "/projects/project/users/openrc-admin/roles/"
+                            "admin-role",
+                        ),
+                    ],
+                    self.admin.request.call_args_list,
+                )
+                self.cfg["scenarios"][scenario]["enabled"] = False
+
+    def test_host_scenario_never_grants_admin_role_to_test_user(self):
+        self.cfg["scenarios"]["nova-drain"]["enabled"] = True
+        self.admin.list.side_effect = lambda service, path, key, **kwargs: {
+            "/domains": [{"id": "domain", "name": "Default"}],
+            "/projects": [
+                {
+                    "id": "project",
+                    "name": self.cfg["identity"]["project"]["name"],
+                    "domain_id": "domain",
+                }
+            ],
+            "/users": [
+                {
+                    "id": "same-user",
+                    "name": self.cfg["identity"]["user"]["name"],
+                    "domain_id": "domain",
+                }
+            ],
+            "/roles": [
+                {"id": "member-role", "name": "member"},
+                {"id": "admin-role", "name": "admin"},
+            ],
+        }[path]
+        self.admin.session.get_user_id.return_value = "same-user"
+        with self.assertRaisesRegex(config.InvalidError, "must differ"):
+            prepare.ensure_identity(self.cfg, self.admin)
+        self.admin.request.assert_not_called()
+
     def test_quotas_disabled_or_apply_only_explicit_keys(self):
         prepare.set_quotas(self.cfg, self.admin, "project")
         self.admin.request.assert_not_called()
