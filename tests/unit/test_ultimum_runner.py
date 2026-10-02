@@ -694,6 +694,54 @@ class StateAndCleanupTest(RunnerCase):
             engine.server(host="host1", creator=creator)
         engine.access.assert_not_called()
 
+    def test_host_directed_server_creates_boot_volume_in_host_az(self):
+        engine = self.engine()
+        engine.access = mock.Mock()
+        engine.create = mock.Mock(return_value={"id": "root-volume"})
+        self.cloud.wait_status.side_effect = [
+            {"id": "root-volume", "availability_zone": "cz04"},
+            {"id": "server", "status": "ACTIVE"},
+        ]
+        creator = mock.Mock(project_id="test-project")
+        creator.post.return_value = {"server": {"id": "server"}}
+
+        engine.server(
+            host="host1",
+            az="cz04",
+            creator=creator,
+            inject_keypair=False,
+        )
+
+        volume_body = engine.create.call_args.args[3]
+        self.assertEqual("cz04", volume_body["availability_zone"])
+        self.assertNotIn("volume_type", volume_body)
+        server_body = creator.post.call_args.args[2]["server"]
+        self.assertEqual("cz04", server_body["availability_zone"])
+        self.assertEqual("host1", server_body["host"])
+        self.assertEqual(
+            "root-volume", server_body["block_device_mapping_v2"][0]["uuid"]
+        )
+
+    def test_host_directed_server_rejects_wrong_volume_az_before_nova(self):
+        engine = self.engine()
+        engine.access = mock.Mock()
+        engine.create = mock.Mock(return_value={"id": "root-volume"})
+        self.cloud.wait_status.return_value = {
+            "id": "root-volume", "availability_zone": "cz03"
+        }
+        creator = mock.Mock(project_id="test-project")
+
+        with self.assertRaisesRegex(config.InvalidError, "expected 'cz04'"):
+            engine.server(host="host1", az="cz04", creator=creator)
+        creator.post.assert_not_called()
+
+        engine.create.reset_mock()
+        self.cfg["storage"]["availability_zone"] = "cz03"
+        with self.assertRaisesRegex(config.InvalidError, "differs"):
+            engine.server(host="host1", az="cz04", creator=creator)
+        engine.create.assert_not_called()
+        creator.post.assert_not_called()
+
     def test_reconciliation_failure_still_restores_host_service(self):
         engine = self.engine()
         engine.reconcile_intents = mock.Mock(

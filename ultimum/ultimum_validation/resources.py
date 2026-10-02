@@ -243,7 +243,7 @@ class Resources:
             f"rules {', '.join(matching)}"
         )
 
-    def volume(self, size, image=None):
+    def volume(self, size, image=None, az=None):
         values = {
             "name": self.name("volume"),
             "size": size,
@@ -254,6 +254,14 @@ class Resources:
         for key, value in self.cfg["storage"].items():
             if value:
                 values[key] = value
+        if az:
+            configured_az = self.cfg["storage"]["availability_zone"]
+            if configured_az and configured_az != az:
+                raise InvalidError(
+                    f"storage.availability_zone {configured_az} differs "
+                    f"from the requested compute AZ {az}"
+                )
+            values["availability_zone"] = az
         volume = self.create("volume", "/volumes", "volume", values)
         self.ledger.event(
             f"WAIT volume {volume['id']}: available ({size} GiB)"
@@ -266,6 +274,12 @@ class Resources:
             self.timeout,
         )
         self.ledger.event(f"OK volume {volume['id']}: available")
+        if az and result.get("availability_zone") != az:
+            raise InvalidError(
+                f"Volume {volume['id']} is in AZ "
+                f"{result.get('availability_zone')!r}; expected {az!r} "
+                "for the host-directed VM"
+            )
         return result
 
     def server(
@@ -315,7 +329,9 @@ class Resources:
             }
             if count == 1:
                 root = self.volume(
-                    compute["root_volume_size_gib"], self.runtime["image_id"]
+                    compute["root_volume_size_gib"],
+                    self.runtime["image_id"],
+                    az=selected_az if host and selected_az else None,
                 )
                 block.update(source_type="volume", uuid=root["id"])
             else:

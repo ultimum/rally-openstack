@@ -489,7 +489,8 @@ is not converted to PASS. Regular TPM evacuation is outside the Masakari test.
    ownership. If the test user already has an ``admin``
    role assignment, the scenario stops before creating resources; remove that
    assignment in Keystone first. Changing the YAML does not revoke an existing
-   role assignment.
+   role assignment. For volume-backed VMs, the runner requests the host's AZ
+   for each boot volume and checks Cinder's result before creating the VM.
 3. Optionally creates ``stopped_instances`` (default zero), writes a
    verification file over SSH, stops each VM and waits for SHUTOFF. Prepares
    floating IPs and SSH for all active VMs.
@@ -730,6 +731,8 @@ Add this section under the existing ``scenarios`` mapping in the mounted YAML::
    test project for host-directed VM creation, as with ``nova-drain``. The
    test user remains ``member``; ``prepare`` assigns the ``admin`` role to the
    admin OpenRC user in the test project. Cloud-init installs the test SSH key.
+   Cinder must provide a volume AZ matching the selected compute host; the
+   runner verifies each boot volume's AZ before submitting the VM request.
 2. Run ``ultimum-rally run nova-evacuate``. The runner creates volume-backed
    VMs on the dedicated host, verifies their placement, writes persistent
    data and prints the Ultimum run UUID. It enters ``WAITING_FOR_FAULT`` and

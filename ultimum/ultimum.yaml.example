@@ -112,6 +112,8 @@ compute:
 
 storage:
   # null = use the cloud's default type/AZ; Nova and Cinder AZ names may differ.
+  # Host-directed drain/evacuate boot volumes use their compute host's AZ.
+  # Cinder must offer that AZ when Nova forbids cross-AZ volume attachments.
   volume_type: null
   availability_zone: null
 
