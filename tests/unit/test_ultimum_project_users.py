@@ -4,6 +4,7 @@
 # not use this file except in compliance with the License. You may obtain
 # a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
 
+import functools
 import importlib.util
 import pathlib
 from unittest import mock
@@ -17,25 +18,40 @@ PLUGIN = (pathlib.Path(__file__).resolve().parents[2]
           / "ultimum" / "plugins" / "project_users.py")
 
 
+@functools.cache
 def load_plugin():
-    """Import the plugin as "users_under_test@openstack".
+    """Import the plugin with "<name>_under_test" plugin names.
 
-    users@openstack stays the upstream plugin in this test process.
+    users@openstack, nova_flavor and glance_image stay the upstream plugins
+    in this test process.
     """
     spec = importlib.util.spec_from_file_location(
         "ultimum_project_users_under_test", PLUGIN)
     module = importlib.util.module_from_spec(spec)
     # Imported here: tests.unit.test registers the [openstack] options first.
+    from rally.common.plugin import plugin
+
     from rally_openstack.task import context
+    from rally_openstack.task import types
     from rally_openstack.task.contexts.keystone import users
 
-    configure = context.configure
+    configure_context = context.configure
+    configure_plugin = plugin.configure
 
-    def rename(name, **kwargs):
-        return configure(name="users_under_test", **kwargs)
+    def rename_context(name, **kwargs):
+        return configure_context(name=name + "_under_test", **kwargs)
+
+    def rename_plugin(name, **kwargs):
+        # context.configure also ends up here with the renamed context.
+        if not name.endswith("_under_test"):
+            name += "_under_test"
+        return configure_plugin(name=name, **kwargs)
 
     with mock.patch.object(users.UserGenerator, "unregister"), \
-            mock.patch.object(context, "configure", rename):
+            mock.patch.object(types.Flavor, "unregister"), \
+            mock.patch.object(types.GlanceImage, "unregister"), \
+            mock.patch.object(context, "configure", rename_context), \
+            mock.patch.object(plugin, "configure", rename_plugin):
         spec.loader.exec_module(module)
     return module
 
@@ -163,3 +179,43 @@ class ProjectUserGeneratorTestCase(test.ScenarioTestCase):
         with mock.patch.dict(self.module.os.environ, clear=True):
             generator = self.module.ProjectUserGenerator(self.context)
         self.assertNotIn("project", generator.config)
+
+
+class UsersFirstResourceTypeTestCase(test.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.module = load_plugin()
+
+    def setUp(self):
+        super().setUp()
+        self.clients = mock.patch.object(
+            self.module.osclients, "Clients").start()
+        self.addCleanup(mock.patch.stopall)
+        self.nova = self.clients.return_value.nova.return_value
+        flavor = mock.Mock(id="private-id")
+        flavor.name = "pc1.1c2g"
+        self.nova.flavors.list.return_value = [flavor]
+
+    def resolve(self, context):
+        processor = self.module.ProjectFlavor(context, scenario_cls=None)
+        return processor.pre_process(resource_spec={"name": "pc1.1c2g"},
+                                     config={"type": "nova_flavor"},
+                                     output_type=str)
+
+    def test_flavor_is_resolved_as_the_workload_user(self):
+        context = {"admin": {"credential": "admin-cred"},
+                   "users": [{"credential": "user-cred"}]}
+        self.assertEqual("private-id", self.resolve(context))
+        self.clients.assert_called_with("user-cred")
+
+    def test_admin_is_used_without_users(self):
+        self.assertEqual("private-id",
+                         self.resolve({"admin": {"credential": "admin-cred"}}))
+        self.clients.assert_called_with("admin-cred")
+
+    def test_image_type_is_replaced_too(self):
+        self.assertTrue(issubclass(self.module.ProjectGlanceImage,
+                                   self.module.UsersFirstResourceType))
+        self.assertEqual("glance_image_under_test",
+                         self.module.ProjectGlanceImage.get_name())

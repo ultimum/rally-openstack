@@ -8,6 +8,11 @@ the temporary users requested by ``users_per_tenant`` inside it and deletes
 only those users at cleanup. The project, its default security group and
 everything else in it are left untouched.
 
+The ``nova_flavor`` and ``glance_image`` argument types are replaced as well:
+they resolve names with the credentials of the workload's users instead of
+the admin's, so flavors and images private to the test project are found
+just as the users who boot the servers see them.
+
 ``ULTIMUM_RALLY_PROJECT_NAME`` (and ``ULTIMUM_RALLY_PROJECT_DOMAIN``) in the
 environment of the Rally process supply the project for every ``users``
 context that does not set one, including the context Rally builds for task
@@ -26,9 +31,11 @@ plugins.load()
 
 from rally import exceptions
 from rally.common import validation
+from rally.common.plugin import plugin
 
 from rally_openstack.common import osclients
 from rally_openstack.task import context
+from rally_openstack.task import types
 from rally_openstack.task.contexts.keystone import users
 
 
@@ -61,8 +68,10 @@ def _schema():
     return schema
 
 
-# Only one plugin may own the "users@openstack" name.
+# Only one plugin may own each name.
 users.UserGenerator.unregister()
+types.Flavor.unregister()
+types.GlanceImage.unregister()
 
 
 @validation.add("required_platform", platform="openstack", users=True)
@@ -117,3 +126,23 @@ class ProjectUserGenerator(users.UserGenerator):
             self.context["tenants"] = {}
         else:
             super().cleanup()
+
+
+class UsersFirstResourceType:
+    """Resolve resources as the workload's first user when there is one."""
+
+    def __init__(self, context, cache=None, *, scenario_cls):
+        super().__init__(context, cache, scenario_cls=scenario_cls)
+        if self._context.get("users"):
+            self._clients = osclients.Clients(
+                self._context["users"][0]["credential"])
+
+
+@plugin.configure(name="nova_flavor")
+class ProjectFlavor(UsersFirstResourceType, types.Flavor):
+    """Find Nova's flavor ID by name or regexp, as the workload's user."""
+
+
+@plugin.configure(name="glance_image")
+class ProjectGlanceImage(UsersFirstResourceType, types.GlanceImage):
+    """Find Glance's image ID by name or regexp, as the workload's user."""

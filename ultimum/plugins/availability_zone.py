@@ -30,7 +30,6 @@ from rally_openstack.common.services.loadbalancer import octavia
 from rally_openstack.common.services.storage import block
 from rally_openstack.task import context
 from rally_openstack.task import scenario
-from rally_openstack.task import types as openstack_types
 from rally_openstack.task.contexts.cinder import volumes
 from rally_openstack.task.contexts.nova import servers
 from rally_openstack.task.scenarios.cinder import utils as cinder_utils
@@ -98,11 +97,12 @@ class ZonalServerGenerator(servers.ServerGenerator):
         if self.config.get("availability_zone"):
             kwargs["availability_zone"] = self.config["availability_zone"]
 
-        image_id = openstack_types.GlanceImage(
+        # Through the registry, so project_users.py resolves them as users.
+        image_id = types.ResourceType.get("glance_image")(
             self.context, scenario_cls=nova_utils.NovaScenario
         ).pre_process(resource_spec=self.config["image"],
                       config={"type": "glance_image"}, output_type=str)
-        flavor_id = openstack_types.Flavor(
+        flavor_id = types.ResourceType.get("nova_flavor")(
             self.context, scenario_cls=nova_utils.NovaScenario
         ).pre_process(resource_spec=self.config["flavor"],
                       config={"type": "nova_flavor"}, output_type=str)
