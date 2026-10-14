@@ -91,6 +91,9 @@ az_validation:
   # Every server boots from a new volume of this size (GiB; raised to what
   # the image needs), with volume_type in volume_availability_zone.
   boot_volume_size: 1
+  # Retries of API calls whose TCP connection could not be opened (nothing
+  # was sent, so retrying is safe). Covers short outages of e.g. a VPN.
+  connect_retries: 5
   # true runs Quotas.*_update(_and_delete), which change and reset the
   # quotas of the project above.
   project_quota_tests: false

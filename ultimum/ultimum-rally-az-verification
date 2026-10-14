@@ -88,7 +88,7 @@ ok "Required commands available"
 
 info "Checking AZ and project plugins"
 
-PLUGINS="availability_zone.py project_users.py boot_from_volume.py"
+PLUGINS="availability_zone.py project_users.py boot_from_volume.py connect_retries.py"
 LOCAL_PLUGIN_DIR="$(dirname "$(readlink -f "$0")")/plugins"
 
 if [ -z "${RALLY_AZ_PLUGIN_DIR:-}" ] && [ ! -d "${PLUGIN_DIR}" ] \
@@ -194,11 +194,16 @@ VOLUME_TYPE="$(setting VOLUME_TYPE cz03)"
 VOLUME_BACKEND_NAME="$(setting VOLUME_BACKEND_NAME huawei-fc)"
 CINDER_BACKUP="$(setting CINDER_BACKUP false)"
 BOOT_VOLUME_SIZE="$(setting BOOT_VOLUME_SIZE 1)"
+CONNECT_RETRIES="$(setting CONNECT_RETRIES 5)"
 FLOATING_NETWORK="$(setting FLOATING_NETWORK ab983650-138d-449b-8782-c91861e65fd0)"
 HEAT_IMAGE="$(setting HEAT_IMAGE "")"
 
 case "${BOOT_VOLUME_SIZE}" in
     ''|*[!0-9]*|0) die "BOOT_VOLUME_SIZE must be a positive integer, not '${BOOT_VOLUME_SIZE}'" ;;
+esac
+
+case "${CONNECT_RETRIES}" in
+    ''|*[!0-9]*) die "CONNECT_RETRIES must be a number >= 0, not '${CONNECT_RETRIES}'" ;;
 esac
 
 for flag in PROJECT_QUOTA_TESTS CINDER_BACKUP; do
@@ -223,6 +228,8 @@ export ULTIMUM_RALLY_BOOT_FROM_VOLUME=true
 export ULTIMUM_RALLY_BOOT_VOLUME_SIZE="${BOOT_VOLUME_SIZE}"
 export ULTIMUM_RALLY_BOOT_VOLUME_TYPE="${VOLUME_TYPE}"
 export ULTIMUM_RALLY_BOOT_VOLUME_AZ="${VOLUME_AVAILABILITY_ZONE}"
+# connect_retries.py retries API calls whose connection could not be opened.
+export ULTIMUM_RALLY_CONNECT_RETRIES="${CONNECT_RETRIES}"
 
 
 #
@@ -362,6 +369,7 @@ info "Image / flavor:          ${IMAGE_NAME} / ${FLAVOR_NAME}"
 info "Resize flavor:           ${RESIZE_FLAVOR_NAME}"
 info "Volume type:             ${VOLUME_TYPE:-<cinder default>}"
 info "Boot volume size:        ${BOOT_VOLUME_SIZE} GiB"
+info "Connect retries:         ${CONNECT_RETRIES}"
 info "Floating network:        ${FLOATING_NETWORK:-<skipped>}"
 info "Heat image source:       ${HEAT_IMAGE}"
 

@@ -21,7 +21,8 @@ TASK = ROOT / "tasks" / "ultimum" / "az-production.yaml"
 WRAPPER = ROOT / "ultimum" / "ultimum-rally-az-verification"
 PLUGIN_DIR = ROOT / "ultimum" / "plugins"
 PLUGINS = ",".join(str(PLUGIN_DIR / name) for name in (
-    "availability_zone.py", "project_users.py", "boot_from_volume.py"))
+    "availability_zone.py", "project_users.py", "boot_from_volume.py",
+    "connect_retries.py"))
 PROJECT = {"name": "rally-az", "domain": "Default"}
 SERVICES = ("barbican", "cinder", "heat", "nova", "octavia")
 
@@ -419,7 +420,8 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
                           "ULTIMUM_RALLY_BOOT_FROM_VOLUME": "true",
                           "ULTIMUM_RALLY_BOOT_VOLUME_SIZE": "1",
                           "ULTIMUM_RALLY_BOOT_VOLUME_TYPE": "cz03",
-                          "ULTIMUM_RALLY_BOOT_VOLUME_AZ": "cz03"}, env)
+                          "ULTIMUM_RALLY_BOOT_VOLUME_AZ": "cz03",
+                          "ULTIMUM_RALLY_CONNECT_RETRIES": "5"}, env)
 
     def test_boot_volume_follows_volume_settings(self):
         result, _ = self.run_wrapper(RALLY_BOOT_VOLUME_SIZE="3",
@@ -430,6 +432,15 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
         self.assertEqual("3", env["ULTIMUM_RALLY_BOOT_VOLUME_SIZE"])
         self.assertEqual("cz03_slow", env["ULTIMUM_RALLY_BOOT_VOLUME_TYPE"])
         self.assertEqual("cz03b", env["ULTIMUM_RALLY_BOOT_VOLUME_AZ"])
+
+    def test_connect_retries_can_be_changed(self):
+        result, _ = self.run_wrapper(RALLY_CONNECT_RETRIES="0")
+        self.assertEqual(0, result.returncode, result.stdout)
+        env = json.loads(pathlib.Path(str(self.log) + ".env").read_text())
+        self.assertEqual("0", env["ULTIMUM_RALLY_CONNECT_RETRIES"])
+        result, calls = self.run_wrapper(RALLY_CONNECT_RETRIES="-1")
+        self.assertNotEqual(0, result.returncode)
+        self.assertFalse(self.task_calls(calls))
 
     def test_invalid_boot_volume_size_does_not_start_a_task(self):
         result, calls = self.run_wrapper(RALLY_BOOT_VOLUME_SIZE="0")

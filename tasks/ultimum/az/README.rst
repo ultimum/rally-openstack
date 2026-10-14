@@ -69,8 +69,9 @@ environment variables override them for one run, for example::
 The wrapper starts the task once (``rally task start`` validates it before
 running any workload, so there is no separate ``rally task validate``), passing
 ``--plugin-paths`` with ``ultimum/plugins/availability_zone.py``,
-``ultimum/plugins/project_users.py`` and
-``ultimum/plugins/boot_from_volume.py``, and returns
+``ultimum/plugins/project_users.py``,
+``ultimum/plugins/boot_from_volume.py`` and
+``ultimum/plugins/connect_retries.py``, and returns
 the exit code of ``rally task start``. It prints the commands for inspecting
 the task and generating its HTML report.
 
@@ -166,6 +167,13 @@ Without the YAML file the defaults below apply. The keys are:
 ``RALLY_BOOT_VOLUME_SIZE``
     Size in GiB of the volume every server boots from; raised to the image's
     ``min_disk``/size when needed. Default: ``1``.
+
+``RALLY_CONNECT_RETRIES``
+    How often an API call is retried when its TCP connection cannot be
+    opened, e.g. during a short VPN outage (``connect_retries.py``). Only
+    connection failures are retried: nothing was sent, so no request runs
+    twice. Read timeouts and API errors fail as before. ``0`` disables it.
+    Default: ``5`` (waits 4, 8, 16, 32 s between attempts).
 
 ``RALLY_FLOATING_NETWORK``
     External network UUID for the two Nova floating IP workloads. Defaults
