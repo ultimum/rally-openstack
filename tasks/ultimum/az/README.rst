@@ -32,7 +32,7 @@ wrapper stops before starting Rally. Use the domain name, not its ID.
 
 Admin-only APIs (aggregates, flavors, hypervisors, services, volume types,
 QoS, encryption types, quotas, role assignment) still use the admin
-credentials of the active Rally deployment created from ``admin.rc``.
+admin credentials from ``admin.rc`` (see *Admin environment* below).
 Barbican scenarios are upstream admin scenarios: their secrets, containers
 and orders are created in the admin's project, not in the test project.
 
@@ -44,7 +44,7 @@ Users created in the project need to fit into its quotas while workloads run.
 Run it
 ======
 
-Inside the container, with an active Rally deployment::
+Inside the container::
 
     ultimum-rally-az-verification
 
@@ -62,6 +62,18 @@ The wrapper validates and starts the task once, passing
 ``ultimum/plugins/project_users.py``, and returns
 the exit code of ``rally task start``. It prints the commands for inspecting
 the task and generating its HTML report.
+
+Admin environment
+=================
+
+The wrapper does not use the active Rally deployment. It builds its own
+Rally environment from the admin OpenRC (``admin.openrc`` in ``ultimum.yaml``,
+or ``RALLY_OPENRC``) with the ``tls`` section of ``ultimum.yaml`` applied, the
+same way ``ultimum-rally`` does, so ``tls.ca_cert`` / ``tls.insecure`` work
+here too. The environment is named ``ultimum-az-<hash>`` after its contents:
+it is reused while ``admin.rc`` and ``tls`` stay the same and a new one is
+created when they change. It is never made the active deployment.
+Credentials are passed to Rally only through a private temporary file.
 
 Configuration
 =============

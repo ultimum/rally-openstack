@@ -253,6 +253,14 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
                 stream.write(json.dumps(args) + "\\n")
             if args[:1] == ["--plugin-paths"]:
                 args = args[2:]
+            if args[:2] == ["env", "show"]:
+                sys.exit(int(os.environ.get("ENV_SHOW_RC", "1")))
+            if args[:2] == ["env", "create"]:
+                with open(args[args.index("--spec") + 1]) as source:
+                    spec = json.load(source)
+                with open(os.environ["SPEC_LOG"], "a") as target:
+                    target.write(json.dumps(spec) + "\\n")
+                sys.exit(int(os.environ.get("ENV_CREATE_RC", "0")))
             if args[:2] == ["task", "validate"]:
                 sys.exit(int(os.environ.get("VALIDATE_RC", "0")))
             if args[:2] == ["task", "start"]:
@@ -263,10 +271,24 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
         rally.chmod(0o755)
         # The wrapper reads ultimum.yaml with PyYAML from this interpreter.
         (self.bin_dir / "python3").symlink_to(sys.executable)
+        self.spec_log = self.directory / "specs.jsonl"
+        self.openrc = self.directory / "admin.rc"
+        self.openrc.write_text(textwrap.dedent("""\
+            export OS_AUTH_URL=https://keystone.example.com:5000/v3
+            export OS_USERNAME=admin
+            export OS_PASSWORD=admin-secret
+            export OS_PROJECT_NAME=admin
+            export OS_USER_DOMAIN_NAME=Default
+            export OS_PROJECT_DOMAIN_NAME=Default
+            export OS_REGION_NAME=RegionOne
+            """))
 
     def run_wrapper(self, **overrides):
         self.log.write_text("")
+        self.spec_log.write_text("")
         env = {
+            "SPEC_LOG": str(self.spec_log),
+            "RALLY_OPENRC": str(self.openrc),
             "PATH": f"{self.bin_dir}:/usr/bin:/bin",
             "COMMAND_LOG": str(self.log),
             "RALLY_DATA_DIR": str(self.data_dir),
@@ -299,8 +321,10 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
                          [call[3] for call in task_calls])
         for call in task_calls:
             self.assertEqual(["--plugin-paths", PLUGINS], call[:2])
-            self.assertEqual([str(TASK), "--task-args"], call[4:6])
-            args = json.loads(call[6])
+            self.assertEqual("--env", call[4])
+            self.assertTrue(call[5].startswith("ultimum-az-"))
+            self.assertEqual([str(TASK), "--task-args"], call[6:8])
+            args = json.loads(call[8])
             self.assertEqual(["nova", "cinder"], args["services"])
             self.assertEqual("rally-az", args["project_name"])
             self.assertEqual("Default", args["project_domain"])
@@ -315,22 +339,22 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
 
     def test_volume_zone_defaults_to_compute_zone_and_can_be_cleared(self):
         _, calls = self.run_wrapper(RALLY_AVAILABILITY_ZONE="zone-a")
-        args = json.loads(self.task_calls(calls)[0][6])
+        args = json.loads(self.task_calls(calls)[0][8])
         self.assertEqual("zone-a", args["volume_availability_zone"])
         _, calls = self.run_wrapper(RALLY_VOLUME_AVAILABILITY_ZONE="")
-        args = json.loads(self.task_calls(calls)[0][6])
+        args = json.loads(self.task_calls(calls)[0][8])
         self.assertEqual("", args["volume_availability_zone"])
 
     def test_heat_image_prefers_prepared_cirros(self):
         _, calls = self.run_wrapper(CIRROS_VERSION="0.6.2")
-        args = json.loads(self.task_calls(calls)[0][6])
+        args = json.loads(self.task_calls(calls)[0][8])
         self.assertTrue(args["heat_image_location"].startswith("https://"))
         image = (self.data_dir / "extra"
                  / "cirros-0.6.2-x86_64-disk.img")
         image.parent.mkdir()
         image.write_text("cached test image")
         _, calls = self.run_wrapper(CIRROS_VERSION="0.6.2")
-        args = json.loads(self.task_calls(calls)[0][6])
+        args = json.loads(self.task_calls(calls)[0][8])
         self.assertEqual(str(image), args["heat_image_location"])
 
     def test_unknown_service_does_not_start_a_task(self):
@@ -366,7 +390,7 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
         result, calls = self.run_wrapper(RALLY_PROJECT_NAME=None,
                                          RALLY_ULTIMUM_CONFIG=str(config))
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-        args = json.loads(self.task_calls(calls)[0][6])
+        args = json.loads(self.task_calls(calls)[0][8])
         self.assertEqual("yaml-project", args["project_name"])
         self.assertEqual("YamlDomain", args["project_domain"])
 
@@ -381,7 +405,7 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
             """))
         _, calls = self.run_wrapper(RALLY_PROJECT_NAME=None,
                                     RALLY_ULTIMUM_CONFIG=str(config))
-        args = json.loads(self.task_calls(calls)[0][6])
+        args = json.loads(self.task_calls(calls)[0][8])
         self.assertEqual("identity-project", args["project_name"])
         self.assertEqual("Default", args["project_domain"])
 
@@ -413,7 +437,7 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
             RALLY_PROJECT_NAME=None, RALLY_ULTIMUM_CONFIG=str(config),
             RALLY_FLAVOR_NAME="env-flavor")
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-        args = json.loads(self.task_calls(calls)[0][6])
+        args = json.loads(self.task_calls(calls)[0][8])
         self.assertEqual("yaml-project", args["project_name"])
         self.assertEqual(["nova", "octavia"], args["services"])
         self.assertEqual("yaml-image", args["image_name"])
@@ -439,4 +463,77 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
         result, calls = self.run_wrapper(RALLY_CINDER_BACKUP="yes")
         self.assertNotEqual(0, result.returncode)
         self.assertIn("CINDER_BACKUP must be true or false", result.stdout)
+        self.assertFalse(self.task_calls(calls))
+
+    def specs(self):
+        return [json.loads(line)["existing@openstack"]
+                for line in self.spec_log.read_text().splitlines()]
+
+    def test_admin_environment_uses_admin_rc_and_yaml_tls(self):
+        ca = self.directory / "ca.pem"
+        ca.write_text("test CA")
+        config = self.directory / "ultimum.yaml"
+        config.write_text(textwrap.dedent(f"""\
+            schema_version: 1
+            tls:
+              insecure: false
+              ca_cert: {ca}
+            az_validation:
+              project:
+                name: rally-az
+            """))
+        result, calls = self.run_wrapper(RALLY_ULTIMUM_CONFIG=str(config))
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        spec, = self.specs()
+        self.assertEqual("https://keystone.example.com:5000/v3",
+                         spec["auth_url"])
+        self.assertEqual("RegionOne", spec["region_name"])
+        self.assertFalse(spec["https_insecure"])
+        self.assertEqual(str(ca), spec["https_cacert"])
+        self.assertEqual({"username": "admin", "password": "admin-secret",
+                          "user_domain_name": "Default",
+                          "project_name": "admin",
+                          "project_domain_name": "Default"}, spec["admin"])
+        self.assertNotIn("admin-secret", json.dumps(calls))
+        create, = [call for call in calls if call[:2] == ["env", "create"]]
+        self.assertIn("--no-use", create)
+        name = create[create.index("--name") + 1]
+        for call in self.task_calls(calls):
+            self.assertEqual(name, call[5])
+        task_list, = [call for call in calls if call[:2] == ["task", "list"]]
+        self.assertEqual(["--env", name], task_list[2:4])
+
+    def test_insecure_tls_from_yaml_disables_verification(self):
+        config = self.directory / "ultimum.yaml"
+        config.write_text(textwrap.dedent("""\
+            schema_version: 1
+            tls:
+              insecure: true
+              ca_cert: /etc/ultimum/ignored-ca.pem
+            """))
+        result, _ = self.run_wrapper(RALLY_ULTIMUM_CONFIG=str(config))
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        spec, = self.specs()
+        self.assertTrue(spec["https_insecure"])
+        self.assertEqual("", spec["https_cacert"])
+
+    def test_existing_admin_environment_is_reused(self):
+        result, calls = self.run_wrapper(ENV_SHOW_RC="0")
+        self.assertEqual(0, result.returncode, result.stdout)
+        self.assertFalse([call for call in calls
+                          if call[:2] == ["env", "create"]])
+        self.assertEqual(2, len(self.task_calls(calls)))
+
+    def test_failed_admin_environment_does_not_start_a_task(self):
+        result, calls = self.run_wrapper(ENV_CREATE_RC="3")
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("Rally admin environment", result.stdout)
+        self.assertNotIn("admin-secret", result.stdout + result.stderr)
+        self.assertFalse(self.task_calls(calls))
+
+    def test_missing_admin_rc_does_not_start_a_task(self):
+        result, calls = self.run_wrapper(
+            RALLY_OPENRC=str(self.directory / "missing.rc"))
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("admin.openrc file does not exist", result.stderr)
         self.assertFalse(self.task_calls(calls))

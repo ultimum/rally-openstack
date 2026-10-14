@@ -83,19 +83,6 @@ ok "Required commands available"
 
 
 #
-# Rally deployment
-#
-
-info "Checking Rally deployment"
-
-if ! rally deployment show >/dev/null 2>&1; then
-    die "No active Rally deployment"
-fi
-
-ok "Rally deployment is active"
-
-
-#
 # AZ and project plugins
 #
 
@@ -130,14 +117,22 @@ ok "Plugins found: ${PLUGIN_PATHS}"
 
 info "Reading configuration"
 
+if [ -d /opt/ultimum/ultimum_validation ]; then
+    ULTIMUM_LIB=/opt/ultimum
+else
+    ULTIMUM_LIB="$(dirname "$(readlink -f "$0")")"
+fi
+
 if [ -f "${ULTIMUM_CONFIG}" ]; then
-    if [ -d /opt/ultimum/ultimum_validation ]; then
-        ULTIMUM_LIB=/opt/ultimum
-    else
-        ULTIMUM_LIB="$(dirname "$(readlink -f "$0")")"
-    fi
+    CONFIG_FILE="${ULTIMUM_CONFIG}"
+else
+    CONFIG_FILE="${ULTIMUM_LIB}/ultimum.yaml.example"
+    warn "No ${ULTIMUM_CONFIG}; using RALLY_* variables and defaults"
+fi
+
+if [ -f "${ULTIMUM_CONFIG}" ]; then
     # Same loader as ultimum-rally, so the YAML is validated identically.
-    if ! CONFIG_VALUES="$(python3 - "${ULTIMUM_LIB}" "${ULTIMUM_CONFIG}" <<'EOF'
+    if ! CONFIG_VALUES="$(python3 - "${ULTIMUM_LIB}" "${CONFIG_FILE}" <<'EOF'
 import shlex
 import sys
 
@@ -170,8 +165,6 @@ EOF
     fi
     eval "${CONFIG_VALUES}"
     ok "Configuration: ${ULTIMUM_CONFIG}"
-else
-    warn "No ${ULTIMUM_CONFIG}; using RALLY_* variables and defaults"
 fi
 
 setting() {
@@ -215,6 +208,75 @@ if [ -z "${PROJECT_NAME}" ]; then
 fi
 
 ok "Test project: ${PROJECT_DOMAIN}/${PROJECT_NAME}"
+
+
+#
+# Admin environment
+#
+
+# A Rally environment built from admin.rc with the TLS settings of
+# ultimum.yaml applied (as ultimum-rally does). Its name is derived from the
+# resulting spec, so a changed OpenRC or TLS setting creates a new one.
+
+info "Preparing Rally admin environment"
+
+if ! RALLY_ENV="$(python3 - "${ULTIMUM_LIB}" "${CONFIG_FILE}" <<'EOF'
+import json
+import os
+import subprocess
+import sys
+import tempfile
+
+sys.path.insert(0, sys.argv[1])
+from ultimum_validation import config
+from ultimum_validation.tls import apply_tls
+
+try:
+    cfg = config.load(sys.argv[2])
+    rc = apply_tls(cfg, config.openrc(
+        os.environ.get("RALLY_OPENRC") or cfg["admin"]["openrc"]))
+except config.InvalidError as exc:
+    sys.exit(str(exc))
+spec = {
+    "auth_url": rc["OS_AUTH_URL"],
+    "region_name": rc.get("OS_REGION_NAME") or None,
+    "endpoint_type": rc.get(
+        "OS_INTERFACE", rc.get("OS_ENDPOINT_TYPE", "public")
+    ).removesuffix("URL"),
+    "https_insecure": rc["OS_INSECURE"] == "true",
+    "https_cacert": rc["OS_CACERT"],
+    "admin": {
+        "username": rc["OS_USERNAME"],
+        "password": rc["OS_PASSWORD"],
+        "user_domain_name": rc.get("OS_USER_DOMAIN_NAME") or "Default",
+        "project_name": rc.get("OS_PROJECT_NAME") or rc["OS_TENANT_NAME"],
+        "project_domain_name": rc.get("OS_PROJECT_DOMAIN_NAME") or "Default",
+    },
+}
+spec = {k: v for k, v in spec.items() if v is not None}
+name = "ultimum-az-" + config.fingerprint(spec)[:12]
+show = subprocess.run(["rally", "env", "show", name, "--json"],
+                      capture_output=True)
+if show.returncode:
+    # Credentials go only into a private temporary file, never into argv.
+    fd, path = tempfile.mkstemp(prefix=".ultimum-az-spec-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as stream:
+            json.dump({"existing@openstack": spec}, stream)
+        create = subprocess.run(
+            ["rally", "env", "create", "--name", name, "--spec", path,
+             "--no-use"], capture_output=True)
+    finally:
+        os.unlink(path)
+    if create.returncode:
+        sys.exit("Rally environment creation failed (output suppressed)")
+print(name)
+EOF
+)"; then
+    die "Could not prepare the Rally admin environment"
+fi
+
+ok "Rally environment: ${RALLY_ENV}"
 
 
 #
@@ -272,6 +334,7 @@ TASK_ARGS+=",\"heat_template_dir\":$(json_string "${HEAT_TEMPLATE_DIR}")"
 TASK_ARGS+=",\"heat_image_location\":$(json_string "${HEAT_IMAGE}")}"
 
 printf "\n"
+info "Rally environment:       ${RALLY_ENV}"
 info "Project:                 ${PROJECT_DOMAIN}/${PROJECT_NAME}"
 info "Project quota tests:     ${PROJECT_QUOTA_TESTS}"
 info "Services:                ${SERVICES}"
@@ -306,6 +369,7 @@ ok "Rally task found: ${TASK}"
 info "Validating Rally task"
 
 if ! rally --plugin-paths "${PLUGIN_PATHS}" task validate \
+    --env "${RALLY_ENV}" \
     "${TASK}" \
     --task-args \
     "${TASK_ARGS}"; then
@@ -324,6 +388,7 @@ printf "\n"
 printf "${BOLD}Starting AZ validation${RESET}\n\n"
 
 rally --plugin-paths "${PLUGIN_PATHS}" task start \
+    --env "${RALLY_ENV}" \
     "${TASK}" \
     --task-args \
     "${TASK_ARGS}"
@@ -343,7 +408,7 @@ fi
 # Last task
 #
 
-TASK_UUID="$(rally task list --uuids-only 2>/dev/null | head -n1 || true)"
+TASK_UUID="$(rally task list --env "${RALLY_ENV}" --uuids-only 2>/dev/null | head -n1 || true)"
 
 if [ -n "${TASK_UUID}" ]; then
     printf "\n"
