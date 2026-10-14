@@ -405,6 +405,10 @@
           concurrency: 2
       contexts:
         network: {{ network }}
+        # Rescuing a volume-backed server needs compute API 2.87.
+        api_versions:
+          nova:
+            version: 2.87
         users: {{ dict(project_users, users_per_tenant=1) | tojson }}
     -
       title: NovaServers.boot_lock_unlock_and_delete tests

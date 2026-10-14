@@ -1,8 +1,10 @@
 heat_template_version: 2016-10-14
 
 description: >
-  An autoscaling group of servers in the requested availability zone and
-  a scaling policy whose signal URL is the scaling_url output.
+  An autoscaling group of servers booted from volumes (Ultimum::BootServer,
+  mapped to boot_server.yaml by the stack environment) in the requested
+  availability zones and a scaling policy whose signal URL is the
+  scaling_url output.
 
 parameters:
   flavor:
@@ -16,6 +18,15 @@ parameters:
   availability_zone:
     type: string
     default: ""
+  volume_availability_zone:
+    type: string
+    default: ""
+  volume_type:
+    type: string
+    default: ""
+  boot_volume_size:
+    type: number
+    default: 1
   scaling_adjustment:
     type: number
     default: 1
@@ -25,22 +36,19 @@ parameters:
     constraints:
       - range: { min: 1 }
 
-conditions:
-  server_zone: { not: { equals: [{ get_param: availability_zone }, ""] } }
-
 resources:
   asg:
     type: OS::Heat::AutoScalingGroup
     properties:
       resource:
-        type: OS::Nova::Server
+        type: Ultimum::BootServer
         properties:
           image: { get_param: image }
           flavor: { get_param: flavor }
-          availability_zone:
-            if: [server_zone, { get_param: availability_zone }, null]
-          networks:
-            - allocate_network: none
+          availability_zone: { get_param: availability_zone }
+          volume_availability_zone: { get_param: volume_availability_zone }
+          volume_type: { get_param: volume_type }
+          boot_volume_size: { get_param: boot_volume_size }
       min_size: 1
       desired_capacity: 3
       max_size: { get_param: max_size }

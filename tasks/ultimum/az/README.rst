@@ -67,10 +67,35 @@ environment variables override them for one run, for example::
         ultimum-rally-az-verification
 
 The wrapper validates and starts the task once, passing
-``--plugin-paths`` with ``ultimum/plugins/availability_zone.py`` and
-``ultimum/plugins/project_users.py``, and returns
+``--plugin-paths`` with ``ultimum/plugins/availability_zone.py``,
+``ultimum/plugins/project_users.py`` and
+``ultimum/plugins/boot_from_volume.py``, and returns
 the exit code of ``rally task start``. It prints the commands for inspecting
 the task and generating its HTML report.
+
+Boot from volume
+================
+
+Every server boots from a volume, since flavors without a local disk refuse
+image-backed servers. ``ultimum/plugins/boot_from_volume.py`` wraps the two
+methods all Nova and Cinder scenarios and the ``servers`` context boot
+through: before each boot it creates a volume from the image with
+``boot_volume_size`` (raised to what the image needs), ``volume_type`` and
+``volume_availability_zone``, and boots from it with
+``delete_on_termination``. Workloads that bring their own block device
+mapping (``boot_server_from_volume*``) are unchanged. Heat stacks boot from
+volumes created by their templates (``heat/boot_server.yaml``).
+
+Exceptions and side effects:
+
+* ``boot_and_delete_multiple_servers`` boots several servers per request,
+  which cannot share one volume; Nova creates their root volumes from the
+  image with Cinder's default type, in the zone Nova chooses.
+* Snapshots of volume-backed servers also snapshot the root volume in
+  Cinder. When ``snapshot_server`` deletes its image, the plugin deletes
+  those volume snapshots and the then unused root volume as well.
+* ``boot_and_bounce_server`` uses compute API 2.87 to rescue a volume-backed
+  server.
 
 Admin environment
 =================
@@ -136,6 +161,10 @@ Without the YAML file the defaults below apply. The keys are:
 ``RALLY_CINDER_BACKUP``
     JSON boolean; ``true`` adds the Cinder backup workloads. Default:
     ``false``.
+
+``RALLY_BOOT_VOLUME_SIZE``
+    Size in GiB of the volume every server boots from; raised to the image's
+    ``min_disk``/size when needed. Default: ``1``.
 
 ``RALLY_FLOATING_NETWORK``
     External network UUID for the two Nova floating IP workloads. Defaults

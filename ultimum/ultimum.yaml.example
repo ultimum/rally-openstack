@@ -88,6 +88,9 @@ az_validation:
   volume_type: cz03            # "" = Cinder default type.
   volume_backend_name: huawei-fc   # Used by the volume type keys workload.
   cinder_backup: false         # true adds the Cinder backup workloads.
+  # Every server boots from a new volume of this size (GiB; raised to what
+  # the image needs), with volume_type in volume_availability_zone.
+  boot_volume_size: 1
   # true runs Quotas.*_update(_and_delete), which change and reset the
   # quotas of the project above.
   project_quota_tests: false

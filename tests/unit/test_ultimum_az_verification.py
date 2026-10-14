@@ -21,7 +21,7 @@ TASK = ROOT / "tasks" / "ultimum" / "az-production.yaml"
 WRAPPER = ROOT / "ultimum" / "ultimum-rally-az-verification"
 PLUGIN_DIR = ROOT / "ultimum" / "plugins"
 PLUGINS = ",".join(str(PLUGIN_DIR / name) for name in (
-    "availability_zone.py", "project_users.py"))
+    "availability_zone.py", "project_users.py", "boot_from_volume.py"))
 PROJECT = {"name": "rally-az", "domain": "Default"}
 SERVICES = ("barbican", "cinder", "heat", "nova", "octavia")
 
@@ -134,6 +134,18 @@ class UltimumAZTaskTestCase(unittest.TestCase):
             for args in workload["scenario"].values()
             if "image" in args.get("parameters", {})]
         self.assertEqual(4, len(parameters))
+        for params in parameters:
+            self.assertEqual(1, params["boot_volume_size"])
+        scale = [args for workload in workloads(task)
+                 for name, args in workload["scenario"].items()
+                 if name == "HeatStacks.create_stack_and_scale"]
+        self.assertEqual(2, len(scale))
+        for args in scale:
+            template = "/templates/boot_server.yaml"
+            self.assertEqual([template], args["files"])
+            self.assertEqual(
+                {"resource_registry": {"Ultimum::BootServer": template}},
+                args["environment"])
         for params in parameters:
             self.assertEqual("compute-az", params["availability_zone"])
             if "volume_availability_zone" in params:
@@ -407,7 +419,28 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stdout)
         env = json.loads(pathlib.Path(str(self.log) + ".env").read_text())
         self.assertEqual({"ULTIMUM_RALLY_PROJECT_NAME": "rally-az",
-                          "ULTIMUM_RALLY_PROJECT_DOMAIN": "Dom"}, env)
+                          "ULTIMUM_RALLY_PROJECT_DOMAIN": "Dom",
+                          "ULTIMUM_RALLY_BOOT_FROM_VOLUME": "true",
+                          "ULTIMUM_RALLY_BOOT_VOLUME_SIZE": "1",
+                          "ULTIMUM_RALLY_BOOT_VOLUME_TYPE": "cz03",
+                          "ULTIMUM_RALLY_BOOT_VOLUME_AZ": "cz03"}, env)
+
+    def test_boot_volume_follows_volume_settings(self):
+        result, _ = self.run_wrapper(RALLY_BOOT_VOLUME_SIZE="3",
+                                     RALLY_VOLUME_TYPE="cz03_slow",
+                                     RALLY_VOLUME_AVAILABILITY_ZONE="cz03b")
+        self.assertEqual(0, result.returncode, result.stdout)
+        env = json.loads(pathlib.Path(str(self.log) + ".env").read_text())
+        self.assertEqual("3", env["ULTIMUM_RALLY_BOOT_VOLUME_SIZE"])
+        self.assertEqual("cz03_slow", env["ULTIMUM_RALLY_BOOT_VOLUME_TYPE"])
+        self.assertEqual("cz03b", env["ULTIMUM_RALLY_BOOT_VOLUME_AZ"])
+
+    def test_invalid_boot_volume_size_does_not_start_a_task(self):
+        result, calls = self.run_wrapper(RALLY_BOOT_VOLUME_SIZE="0")
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("BOOT_VOLUME_SIZE must be a positive integer",
+                      result.stdout)
+        self.assertFalse(self.task_calls(calls))
 
     def test_project_falls_back_to_identity_project(self):
         config = self.directory / "ultimum.yaml"

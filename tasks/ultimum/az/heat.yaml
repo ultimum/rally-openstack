@@ -1,7 +1,10 @@
 {% set heat_image_name = "ultimum-az-heat-image" %}
 {% set heat_image = {"image_url": heat_image_location, "disk_format": "qcow2", "container_format": "bare", "images_per_tenant": 1, "image_name": heat_image_name} | tojson %}
-{% set zonal_server = {"image": heat_image_name, "flavor": flavor_name, "availability_zone": availability_zone or ""} %}
-{% set zonal_volume_server = dict(zonal_server, volume_availability_zone=volume_availability_zone or "", volume_type=volume_type or "") %}
+{#- Servers boot from volumes: flavors without a local disk refuse
+    image-backed servers. #}
+{% set zonal_server = {"image": heat_image_name, "flavor": flavor_name, "availability_zone": availability_zone or "", "volume_availability_zone": volume_availability_zone or "", "volume_type": volume_type or "", "boot_volume_size": boot_volume_size} %}
+{% set zonal_volume_server = zonal_server %}
+{% set boot_server_template = heat_template_dir ~ "/boot_server.yaml" %}
     -
       title: HeatStacks.create_and_list_stack tests
       scenario:
@@ -121,6 +124,10 @@
               output_key: "scaling_url"
               delta: {{ delta }}
               parameters: {{ dict(zonal_server, scaling_adjustment=delta) | tojson }}
+              files: [{{ boot_server_template | tojson }}]
+              environment:
+                resource_registry:
+                  "Ultimum::BootServer": {{ boot_server_template | tojson }}
           runner:
             constant:
               times: 2

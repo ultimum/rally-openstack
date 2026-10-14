@@ -21,6 +21,7 @@
 {% set volume_type = volume_type | default("cz03") or none %}
 {% set volume_backend_name = volume_backend_name | default("huawei-fc") %}
 {% set cinder_backup = cinder_backup | default(false) %}
+{% set boot_volume_size = boot_volume_size | default(1) %}
 {% set floating_network = floating_network | default("ab983650-138d-449b-8782-c91861e65fd0") %}
 {% set heat_template_dir = heat_template_dir | default("/opt/rally-openstack/tasks/ultimum/az/heat") %}
 {% set heat_image_location = heat_image_location | default("https://download.cirros-cloud.net/0.6.3/cirros-0.6.3-x86_64-disk.img") %}

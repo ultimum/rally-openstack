@@ -1,8 +1,9 @@
 heat_template_version: 2016-10-14
 
 description: >
-  A server and a volume attached to it, both in the requested availability
-  zones. Empty zone or volume type values keep the service defaults.
+  A server booted from a volume and a second volume attached to it, all in
+  the requested availability zones. Empty zone or volume type values keep
+  the service defaults.
 
 parameters:
   image:
@@ -15,14 +16,20 @@ parameters:
     default: ""
   volume_availability_zone:
     type: string
-    description: Availability zone of the volume.
+    description: Availability zone of the volumes.
     default: ""
   volume_type:
     type: string
     default: ""
+  boot_volume_size:
+    type: number
+    description: Size of the boot volume in GB.
+    default: 1
+    constraints:
+      - range: { min: 1, max: 1024 }
   volume_size:
     type: number
-    description: Size of the volume to be created.
+    description: Size of the attached volume in GB.
     default: 1
     constraints:
       - range: { min: 1, max: 1024 }
@@ -34,13 +41,25 @@ conditions:
   volume_type_set: { not: { equals: [{ get_param: volume_type }, ""] } }
 
 resources:
+  boot_volume:
+    type: OS::Cinder::Volume
+    properties:
+      image: { get_param: image }
+      size: { get_param: boot_volume_size }
+      availability_zone:
+        if: [volume_zone, { get_param: volume_availability_zone }, null]
+      volume_type:
+        if: [volume_type_set, { get_param: volume_type }, null]
   server:
     type: OS::Nova::Server
     properties:
-      image: { get_param: image }
       flavor: { get_param: flavor }
       availability_zone:
         if: [server_zone, { get_param: availability_zone }, null]
+      block_device_mapping_v2:
+        - volume_id: { get_resource: boot_volume }
+          boot_index: 0
+          delete_on_termination: false
       networks:
         - allocate_network: none
   cinder_volume:

@@ -1,0 +1,61 @@
+heat_template_version: 2016-10-14
+
+description: >
+  A server booted from a new volume created from the image. Flavors without
+  a local disk only accept volume-backed servers. Empty zone or volume type
+  values keep the service defaults.
+
+parameters:
+  image:
+    type: string
+  flavor:
+    type: string
+  availability_zone:
+    type: string
+    description: Availability zone of the server.
+    default: ""
+  volume_availability_zone:
+    type: string
+    description: Availability zone of the boot volume.
+    default: ""
+  volume_type:
+    type: string
+    default: ""
+  boot_volume_size:
+    type: number
+    description: Size of the boot volume in GB.
+    default: 1
+    constraints:
+      - range: { min: 1, max: 1024 }
+
+conditions:
+  server_zone: { not: { equals: [{ get_param: availability_zone }, ""] } }
+  volume_zone: { not: { equals: [{ get_param: volume_availability_zone }, ""] } }
+  volume_type_set: { not: { equals: [{ get_param: volume_type }, ""] } }
+
+resources:
+  boot_volume:
+    type: OS::Cinder::Volume
+    properties:
+      image: { get_param: image }
+      size: { get_param: boot_volume_size }
+      availability_zone:
+        if: [volume_zone, { get_param: volume_availability_zone }, null]
+      volume_type:
+        if: [volume_type_set, { get_param: volume_type }, null]
+  server:
+    type: OS::Nova::Server
+    properties:
+      flavor: { get_param: flavor }
+      availability_zone:
+        if: [server_zone, { get_param: availability_zone }, null]
+      block_device_mapping_v2:
+        - volume_id: { get_resource: boot_volume }
+          boot_index: 0
+          delete_on_termination: false
+      networks:
+        - allocate_network: none
+
+outputs:
+  server_id:
+    value: { get_resource: server }
