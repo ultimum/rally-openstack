@@ -1,8 +1,13 @@
-{% set heat_image_name = "ultimum-az-heat-image" %}
-{% set heat_image = {"image_url": heat_image_location, "disk_format": "qcow2", "container_format": "bare", "images_per_tenant": 1, "image_name": heat_image_name} | tojson %}
+{#- Heat caches image name -> ID per project for up to an hour
+    ([resource_finder_cache]) and every workload runs in the same project, so
+    a name reused after its image was deleted resolves to the deleted image
+    ("Invalid image identifier"). Each workload, in each run, therefore
+    uploads its image under its own name. #}
+{% set heat_image_prefix = "ultimum-az-heat-image-" ~ (heat_run_id ~ "-" if heat_run_id else "") %}
+{% set heat_image = {"image_url": heat_image_location, "disk_format": "qcow2", "container_format": "bare", "images_per_tenant": 1} %}
 {#- Servers boot from volumes: flavors without a local disk refuse
     image-backed servers. #}
-{% set zonal_server = {"image": heat_image_name, "flavor": flavor_name, "availability_zone": availability_zone or "", "volume_availability_zone": volume_availability_zone or "", "volume_type": volume_type or "", "boot_volume_size": boot_volume_size} %}
+{% set zonal_server = {"flavor": flavor_name, "availability_zone": availability_zone or "", "volume_availability_zone": volume_availability_zone or "", "volume_type": volume_type or "", "boot_volume_size": boot_volume_size} %}
 {% set zonal_volume_server = zonal_server %}
 {% set boot_server_template = heat_template_dir ~ "/boot_server.yaml" %}
     -
@@ -33,19 +38,19 @@
           scenario:
             HeatStacks.create_and_delete_stack:
               template_path: {{ (heat_template_dir ~ "/server_with_volume.yaml") | tojson }}
-              parameters: {{ zonal_volume_server | tojson }}
+              parameters: {{ dict(zonal_volume_server, image=heat_image_prefix ~ "server-with-volume") | tojson }}
           runner:
             constant:
               times: 2
               concurrency: 2
           contexts:
             users: {{ dict(project_users, users_per_tenant=2) | tojson }}
-            images: {{ heat_image }}
+            images: {{ dict(heat_image, image_name=heat_image_prefix ~ "server-with-volume") | tojson }}
         -
           scenario:
             HeatStacks.create_and_delete_stack:
               template_path: {{ (heat_template_dir ~ "/resource_group_server_with_volume.yaml") | tojson }}
-              parameters: {{ dict(zonal_volume_server, num_instances=2) | tojson }}
+              parameters: {{ dict(zonal_volume_server, num_instances=2, image=heat_image_prefix ~ "resource-group") | tojson }}
               files: [{{ (heat_template_dir ~ "/server_with_volume.yaml") | tojson }}]
               environment:
                 resource_registry:
@@ -56,7 +61,7 @@
               concurrency: 2
           contexts:
             users: {{ dict(project_users, users_per_tenant=1) | tojson }}
-            images: {{ heat_image }}
+            images: {{ dict(heat_image, image_name=heat_image_prefix ~ "resource-group") | tojson }}
         -
           scenario:
             HeatStacks.create_and_delete_stack:
@@ -123,7 +128,7 @@
               template_path: {{ (heat_template_dir ~ "/autoscaling_group.yaml") | tojson }}
               output_key: "scaling_url"
               delta: {{ delta }}
-              parameters: {{ dict(zonal_server, scaling_adjustment=delta) | tojson }}
+              parameters: {{ dict(zonal_server, scaling_adjustment=delta, image=heat_image_prefix ~ "scale-" ~ loop.index) | tojson }}
               files: [{{ boot_server_template | tojson }}]
               environment:
                 resource_registry:
@@ -134,7 +139,7 @@
               concurrency: {{ concurrency }}
           contexts:
             users: {{ dict(project_users, users_per_tenant=1) | tojson }}
-            images: {{ heat_image }}
+            images: {{ dict(heat_image, image_name=heat_image_prefix ~ "scale-" ~ loop.index) | tojson }}
 {%- endfor %}
 {%- for scenario_name in ("create_stack_and_list_output", "create_stack_and_list_output_via_API") %}
     -

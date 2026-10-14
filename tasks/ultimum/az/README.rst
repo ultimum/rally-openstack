@@ -219,7 +219,11 @@ Without the YAML file the defaults below apply. The keys are:
     (Heat needs an exact image name, not a pattern). Defaults to the CirrOS
     QCOW2 prepared by the Glance wrapper in ``$RALLY_DATA_DIR/extra``, or the
     CirrOS download URL when that file does not exist. ``CIRROS_VERSION``
-    selects the version (default ``0.6.3``).
+    selects the version (default ``0.6.3``). Each workload uploads it as
+    ``ultimum-az-heat-image-<run>-<workload>``: Heat caches image name -> ID
+    per project for an hour, so a name reused in the same project after its
+    image was deleted would resolve to the deleted image ("Invalid image
+    identifier or unable to access requested image").
 
 ``RALLY_DATA_DIR`` / ``RALLY_TASK_DIR`` / ``RALLY_AZ_PLUGIN_DIR``
     Data directory (``/data``), task root (``/opt/rally-openstack/tasks``) and

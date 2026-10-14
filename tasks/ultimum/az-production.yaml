@@ -30,6 +30,7 @@
 {% set boot_volume_size = boot_volume_size | default(1) %}
 {% set floating_network = floating_network | default("ab983650-138d-449b-8782-c91861e65fd0") %}
 {% set heat_template_dir = heat_template_dir | default("/opt/rally-openstack/tasks/ultimum/az/heat") %}
+{% set heat_run_id = heat_run_id | default("") %}
 {% set heat_image_location = heat_image_location | default("https://download.cirros-cloud.net/0.6.3/cirros-0.6.3-x86_64-disk.img") %}
 {% set network_create_args = {"availability_zone_hints": [network_availability_zone]} if network_availability_zone else {} %}
 ---

@@ -386,7 +386,9 @@ TASK_ARGS+=",\"cinder_backup\":${CINDER_BACKUP}"
 TASK_ARGS+=",\"boot_volume_size\":${BOOT_VOLUME_SIZE}"
 TASK_ARGS+=",\"floating_network\":$(json_string "${FLOATING_NETWORK}")"
 TASK_ARGS+=",\"heat_template_dir\":$(json_string "${HEAT_TEMPLATE_DIR}")"
-TASK_ARGS+=",\"heat_image_location\":$(json_string "${HEAT_IMAGE}")}"
+TASK_ARGS+=",\"heat_image_location\":$(json_string "${HEAT_IMAGE}")"
+# Heat caches image name -> ID for an hour: every run names its images anew.
+TASK_ARGS+=",\"heat_run_id\":\"$(date -u +%Y%m%d%H%M%S)\"}"
 
 printf "\n"
 info "Rally environment:       ${RALLY_ENV}"

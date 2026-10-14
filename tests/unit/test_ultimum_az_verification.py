@@ -191,6 +191,22 @@ class UltimumAZTaskTestCase(unittest.TestCase):
                                  (scenario["protocol"],
                                   scenario["lb_algorithm"]))
 
+    def test_heat_workloads_upload_images_under_their_own_names(self):
+        task = render_task({"services": ["heat"], "heat_run_id": "run7"})
+        names = []
+        for workload in workloads(task):
+            images = workload.get("contexts", {}).get("images")
+            if not images:
+                continue
+            name = images["image_name"]
+            # Heat caches image name -> ID per project for an hour.
+            self.assertTrue(name.startswith("ultimum-az-heat-image-run7-"))
+            (args,) = workload["scenario"].values()
+            self.assertEqual(name, args["parameters"]["image"])
+            names.append(name)
+        self.assertEqual(4, len(names))
+        self.assertEqual(len(names), len(set(names)))
+
     def test_empty_zones_keep_service_defaults(self):
         task = render_task({"availability_zone": "",
                             "volume_availability_zone": "",
@@ -385,6 +401,7 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
             self.assertEqual("ovn", args["octavia_provider"])
             self.assertEqual("", args["octavia_availability_zone"])
             self.assertEqual("m1.small", args["flavor_name"])
+            self.assertRegex(args["heat_run_id"], r"^[0-9]{14}$")
             self.assertEqual(str(ROOT / "tasks" / "ultimum" / "az" / "heat"),
                              args["heat_template_dir"])
             self.assertTrue(list(workloads(render_task(args))))
