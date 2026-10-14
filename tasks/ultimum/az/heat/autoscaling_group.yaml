@@ -5,7 +5,7 @@ description: >
   mapped to boot_server.yaml by the stack environment) in the requested
   availability zones and a scaling policy whose Heat API signal URL is the
   scaling_url output (signal_url: needs a Keystone token, no EC2
-  credentials; the heat_signal.py plugin sends it).
+  credentials; the heat_scaling.py plugin sends it).
 
 parameters:
   flavor:

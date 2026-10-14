@@ -15,7 +15,7 @@ from tests.unit import test
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-PLUGIN = ROOT / "ultimum" / "plugins" / "heat_signal.py"
+PLUGIN = ROOT / "ultimum" / "plugins" / "heat_scaling.py"
 HEAT_TEMPLATES = ROOT / "tasks" / "ultimum" / "az" / "heat"
 SIGNAL_URL = ("https://heat.example:8004/v1/project-id/stacks/"
               "s_rally_abc/0b1c-id/resources/scaling_policy/signal")
@@ -31,16 +31,18 @@ def load_plugin():
     # Imported here: tests.unit.test registers the [openstack] options first.
     from rally_openstack.task.scenarios.heat import utils as heat_utils
 
-    original = heat_utils.HeatScenario._stack_webhook
+    original = (heat_utils.HeatScenario._stack_webhook,
+                heat_utils.HeatScenario._count_instances)
     spec = importlib.util.spec_from_file_location(
-        "ultimum_heat_signal_under_test", PLUGIN)
+        "ultimum_heat_scaling_under_test", PLUGIN)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    heat_utils.HeatScenario._stack_webhook = original
+    (heat_utils.HeatScenario._stack_webhook,
+     heat_utils.HeatScenario._count_instances) = original
     return module
 
 
-class HeatSignalTestCase(test.TestCase):
+class HeatScalingTestCase(test.TestCase):
     def setUp(self):
         super().setUp()
         self.module = load_plugin()
@@ -86,6 +88,19 @@ class HeatSignalTestCase(test.TestCase):
             self.module.exceptions.InvalidConfigException,
             self.module.stack_webhook,
             self.scenario(), self.stack(SIGNAL_URL), "missing")
+
+    def test_servers_inside_group_member_stacks_are_counted(self):
+        scenario = self.scenario()
+        resources = scenario.clients.return_value.resources
+        resources.list.return_value = [
+            mock.Mock(resource_type=kind) for kind in (
+                "OS::Heat::AutoScalingGroup", "OS::Heat::ScalingPolicy",
+                "Ultimum::BootServer", "Ultimum::BootServer",
+                "OS::Nova::Server", "OS::Cinder::Volume", "OS::Nova::Server",
+                "OS::Cinder::Volume")]
+        stack = mock.Mock(id="stack-id")
+        self.assertEqual(2, self.module.count_instances(scenario, stack))
+        resources.list.assert_called_once_with("stack-id", nested_depth=2)
 
     def test_heat_templates_use_no_ec2_signed_urls(self):
         for path in HEAT_TEMPLATES.glob("*.yaml"):

@@ -72,7 +72,7 @@ running any workload, so there is no separate ``rally task validate``), passing
 ``ultimum/plugins/project_users.py``,
 ``ultimum/plugins/boot_from_volume.py``,
 ``ultimum/plugins/connect_retries.py`` and
-``ultimum/plugins/heat_signal.py``, and returns
+``ultimum/plugins/heat_scaling.py``, and returns
 the exit code of ``rally task start``. It prints the commands for inspecting
 the task and generating its HTML report.
 
@@ -97,9 +97,12 @@ scaling policy. Upstream it POSTs to the policy's ``alarm_url``, a URL
 pre-signed with EC2 credentials that heat-api-cfn validates against Keystone
 ``/v3/ec2tokens``. Ultimum does not use EC2 credentials:
 ``heat/autoscaling_group.yaml`` outputs the policy's ``signal_url`` (Heat
-API), and ``ultimum/plugins/heat_signal.py`` sends that signal through
+API), and ``ultimum/plugins/heat_scaling.py`` sends that signal through
 heatclient as the scenario user (Keystone token, Rally's Heat endpoint). No
-EC2 credentials are created and heat-api-cfn is not used.
+EC2 credentials are created and heat-api-cfn is not used. The scenario then
+waits for the number of servers to change; group members are
+``Ultimum::BootServer`` stacks, so the plugin counts servers one nesting level
+deeper than upstream (``nested_depth=2``).
 
 Exceptions and side effects:
 

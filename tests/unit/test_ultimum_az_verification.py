@@ -22,7 +22,7 @@ WRAPPER = ROOT / "ultimum" / "ultimum-rally-az-verification"
 PLUGIN_DIR = ROOT / "ultimum" / "plugins"
 PLUGINS = ",".join(str(PLUGIN_DIR / name) for name in (
     "availability_zone.py", "project_users.py", "boot_from_volume.py",
-    "connect_retries.py", "heat_signal.py"))
+    "connect_retries.py", "heat_scaling.py"))
 PROJECT = {"name": "rally-az", "domain": "Default"}
 SERVICES = ("barbican", "cinder", "heat", "nova", "octavia")
 
