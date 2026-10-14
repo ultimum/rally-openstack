@@ -48,11 +48,12 @@ def load_plugin():
         return configure_plugin(name=name, **kwargs)
 
     with mock.patch.object(users.UserGenerator, "unregister"), \
-            mock.patch.object(types.Flavor, "unregister"), \
-            mock.patch.object(types.GlanceImage, "unregister"), \
             mock.patch.object(context, "configure", rename_context), \
             mock.patch.object(plugin, "configure", rename_plugin):
         spec.loader.exec_module(module)
+    # The plugin hides the upstream types; keep them visible for other tests.
+    types.Flavor._meta_set("hidden", False)
+    types.GlanceImage._meta_set("hidden", False)
     return module
 
 
@@ -213,6 +214,13 @@ class UsersFirstResourceTypeTestCase(test.TestCase):
         self.assertEqual("private-id",
                          self.resolve({"admin": {"credential": "admin-cred"}}))
         self.clients.assert_called_with("admin-cred")
+
+    def test_upstream_types_stay_usable_directly(self):
+        # Validators instantiate the upstream classes directly.
+        from rally_openstack.task import types
+
+        self.assertEqual("nova_flavor", types.Flavor.get_name())
+        self.assertEqual("glance_image", types.GlanceImage.get_name())
 
     def test_image_type_is_replaced_too(self):
         self.assertTrue(issubclass(self.module.ProjectGlanceImage,

@@ -68,10 +68,13 @@ def _schema():
     return schema
 
 
-# Only one plugin may own each name.
+# Only one plugin may own the "users@openstack" name.
 users.UserGenerator.unregister()
-types.Flavor.unregister()
-types.GlanceImage.unregister()
+# Validators still instantiate the upstream types directly, so they keep
+# their plugin meta and are only hidden from lookups by name; the
+# replacements below are registered for the "openstack" platform.
+types.Flavor._meta_set("hidden", True)
+types.GlanceImage._meta_set("hidden", True)
 
 
 @validation.add("required_platform", platform="openstack", users=True)
@@ -138,11 +141,11 @@ class UsersFirstResourceType:
                 self._context["users"][0]["credential"])
 
 
-@plugin.configure(name="nova_flavor")
+@plugin.configure(name="nova_flavor", platform="openstack")
 class ProjectFlavor(UsersFirstResourceType, types.Flavor):
     """Find Nova's flavor ID by name or regexp, as the workload's user."""
 
 
-@plugin.configure(name="glance_image")
+@plugin.configure(name="glance_image", platform="openstack")
 class ProjectGlanceImage(UsersFirstResourceType, types.GlanceImage):
     """Find Glance's image ID by name or regexp, as the workload's user."""
