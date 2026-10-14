@@ -488,6 +488,7 @@ class ZonalPoolScenario(ZonalOctaviaBase):
         protocol: str,
         lb_algorithm: str,
         availability_zone: str | None = None,
+        provider: str | None = None,
     ) -> None:
         """Create a pool on a load balancer per subnet in the zone.
 
@@ -495,8 +496,11 @@ class ZonalPoolScenario(ZonalOctaviaBase):
         :param lb_algorithm: loadbalancer algorithm
         :param availability_zone: Octavia availability zone of the load
                                   balancers; null keeps the default
+        :param provider: Provider name for the load balancers; null keeps
+                         Octavia's default provider
         """
-        for loadbalancer in self._create_loadbalancers(availability_zone):
+        for loadbalancer in self._create_loadbalancers(availability_zone,
+                                                       provider=provider):
             pool = self.octavia.pool_create(
                 lb_id=loadbalancer["id"],
                 protocol=protocol, lb_algorithm=lb_algorithm)

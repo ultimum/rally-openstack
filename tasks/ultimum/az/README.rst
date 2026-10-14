@@ -156,11 +156,21 @@ Without the YAML file the defaults below apply. The keys are:
     ``RALLY_AVAILABILITY_ZONE``. Set it to an empty string to keep the Cinder
     default.
 
+``RALLY_OCTAVIA_PROVIDER``
+    Octavia provider of every load balancer. Default: ``ovn``. The OVN
+    provider supports only the TCP, UDP and SCTP protocols with the
+    ``SOURCE_IP_PORT`` or ``SOURCE_IP`` algorithm, so the pool workloads use
+    ``TCP`` with ``SOURCE_IP_PORT``; other providers use ``HTTP`` with
+    ``ROUND_ROBIN``. An empty string uses Octavia's
+    ``default_provider_driver``.
+
 ``RALLY_OCTAVIA_AVAILABILITY_ZONE``
-    Octavia availability zone of every load balancer. Defaults to
-    ``RALLY_AVAILABILITY_ZONE``; it must exist in Octavia
-    (``openstack loadbalancer availability zone list``). Set it to an empty
-    string to keep the Octavia default.
+    Octavia availability zone of every load balancer; it must exist in
+    Octavia (``openstack loadbalancer availabilityzone list``). Defaults to
+    ``RALLY_AVAILABILITY_ZONE``, except with the ``ovn`` provider: it does
+    not support availability zones (Octavia refuses a zone with metadata),
+    so no zone is sent unless this is set. An empty string keeps the
+    Octavia default.
 
 ``RALLY_NETWORK_AVAILABILITY_ZONE``
     Optional ``availability_zone_hints`` value for the tenant networks.
@@ -245,7 +255,8 @@ same as in ``rally-jobs``:
     AZ. The boot variant requires ``AggregateInstanceExtraSpecsFilter``.
 
 ``UltimumOctavia.*``
-    The nine Octavia scenarios with an ``availability_zone`` argument.
+    The nine Octavia scenarios with ``availability_zone`` and ``provider``
+    arguments.
 
 Heat templates with servers and volumes are in ``heat/``; the others are
 copies of the ``rally-jobs/extra`` templates.

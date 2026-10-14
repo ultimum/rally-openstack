@@ -1,4 +1,8 @@
 {% set lb_az = octavia_availability_zone | tojson %}
+{% set lb_provider = octavia_provider | tojson %}
+{#- OVN load balancers support only TCP, UDP and SCTP with the SOURCE_IP_PORT
+    or SOURCE_IP algorithm. #}
+{% set pool = {"protocol": "TCP", "lb_algorithm": "SOURCE_IP_PORT"} if octavia_provider == "ovn" else {"protocol": "HTTP", "lb_algorithm": "ROUND_ROBIN"} %}
 {%- for title, scenario_name in (
       ("create_and_list_loadbalancers", "create_and_list_loadbalancers"),
       ("create_and_delete_loadbalancers", "create_and_delete_loadbalancers"),
@@ -10,6 +14,7 @@
       scenario:
         UltimumOctavia.{{ scenario_name }}:
           availability_zone: {{ lb_az }}
+          provider: {{ lb_provider }}
       runner:
         constant:
           times: 2
@@ -28,9 +33,10 @@
       title: Octavia.{{ scenario_name }}
       scenario:
         UltimumOctavia.{{ scenario_name }}:
-          protocol: "HTTP"
-          lb_algorithm: "ROUND_ROBIN"
+          protocol: {{ pool.protocol | tojson }}
+          lb_algorithm: {{ pool.lb_algorithm | tojson }}
           availability_zone: {{ lb_az }}
+          provider: {{ lb_provider }}
       runner:
         constant:
           times: 2

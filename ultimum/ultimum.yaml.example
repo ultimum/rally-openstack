@@ -81,8 +81,12 @@ az_validation:
   # Every volume (also attached, boot and restore volumes, Heat volumes).
   # null = availability_zone; "" = Cinder default.
   volume_availability_zone: null
+  # Octavia provider of every load balancer. With ovn the pools use TCP and
+  # SOURCE_IP_PORT, the only protocol/algorithm pair both support.
+  octavia_provider: ovn
   # Octavia AZ of every load balancer; it must exist in Octavia.
-  # null = availability_zone; "" = Octavia default.
+  # null = availability_zone, except with the ovn provider: it does not
+  # support availability zones, so null sends none. "" = Octavia default.
   octavia_availability_zone: null
   network_availability_zone: null  # availability_zone_hints of networks.
   volume_type: cz03            # "" = Cinder default type.

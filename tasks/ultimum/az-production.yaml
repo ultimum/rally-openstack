@@ -20,7 +20,9 @@
 {% set resize_flavor_name = resize_flavor_name | default("m1.medium") %}
 {% set availability_zone = availability_zone | default("cz03") or none %}
 {% set volume_availability_zone = volume_availability_zone | default(availability_zone) or none %}
-{% set octavia_availability_zone = octavia_availability_zone | default(availability_zone) or none %}
+{% set octavia_provider = octavia_provider | default("ovn") or none %}
+{#- The ovn provider does not support availability zones. #}
+{% set octavia_availability_zone = octavia_availability_zone | default(none if octavia_provider == "ovn" else availability_zone) or none %}
 {% set network_availability_zone = network_availability_zone | default("") or none %}
 {% set volume_type = volume_type | default("cz03") or none %}
 {% set volume_backend_name = volume_backend_name | default("huawei-fc") %}

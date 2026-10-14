@@ -162,6 +162,35 @@ class UltimumAZTaskTestCase(unittest.TestCase):
                         (ROOT / "tasks" / "ultimum" / "az" / "heat"
                          / template).is_file(), template)
 
+    def octavia_workloads(self, args):
+        return [scenario for workload in workloads(render_task(
+                    {"services": ["octavia"], **args}))
+                for name, scenario in workload["scenario"].items()
+                if name.startswith("UltimumOctavia.")]
+
+    def test_octavia_uses_ovn_with_its_protocol_and_algorithm(self):
+        scenarios = self.octavia_workloads({"availability_zone": "nova-az"})
+        self.assertEqual(9, len(scenarios))
+        for scenario in scenarios:
+            self.assertEqual("ovn", scenario["provider"])
+            # ovn does not support availability zones.
+            self.assertIsNone(scenario["availability_zone"])
+            if "protocol" in scenario:
+                self.assertEqual(("TCP", "SOURCE_IP_PORT"),
+                                 (scenario["protocol"],
+                                  scenario["lb_algorithm"]))
+
+    def test_other_octavia_provider_keeps_http_and_the_compute_zone(self):
+        scenarios = self.octavia_workloads({"availability_zone": "nova-az",
+                                            "octavia_provider": "amphora"})
+        for scenario in scenarios:
+            self.assertEqual("amphora", scenario["provider"])
+            self.assertEqual("nova-az", scenario["availability_zone"])
+            if "protocol" in scenario:
+                self.assertEqual(("HTTP", "ROUND_ROBIN"),
+                                 (scenario["protocol"],
+                                  scenario["lb_algorithm"]))
+
     def test_empty_zones_keep_service_defaults(self):
         task = render_task({"availability_zone": "",
                             "volume_availability_zone": "",
@@ -352,11 +381,24 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
             self.assertFalse(args["project_quota_tests"])
             self.assertEqual("zone-a", args["availability_zone"])
             self.assertEqual("zone-b", args["volume_availability_zone"])
-            self.assertEqual("zone-a", args["octavia_availability_zone"])
+            # The default ovn provider does not support Octavia zones.
+            self.assertEqual("ovn", args["octavia_provider"])
+            self.assertEqual("", args["octavia_availability_zone"])
             self.assertEqual("m1.small", args["flavor_name"])
             self.assertEqual(str(ROOT / "tasks" / "ultimum" / "az" / "heat"),
                              args["heat_template_dir"])
             self.assertTrue(list(workloads(render_task(args))))
+
+    def test_octavia_zone_follows_compute_zone_for_other_providers(self):
+        _, calls = self.run_wrapper(RALLY_AVAILABILITY_ZONE="zone-a",
+                                    RALLY_OCTAVIA_PROVIDER="amphora")
+        args = json.loads(self.task_calls(calls)[0][8])
+        self.assertEqual("amphora", args["octavia_provider"])
+        self.assertEqual("zone-a", args["octavia_availability_zone"])
+        _, calls = self.run_wrapper(RALLY_OCTAVIA_AVAILABILITY_ZONE="lb-az")
+        args = json.loads(self.task_calls(calls)[0][8])
+        self.assertEqual("ovn", args["octavia_provider"])
+        self.assertEqual("lb-az", args["octavia_availability_zone"])
 
     def test_volume_zone_defaults_to_compute_zone_and_can_be_cleared(self):
         _, calls = self.run_wrapper(RALLY_AVAILABILITY_ZONE="zone-a")
