@@ -48,7 +48,8 @@ Inside the container, with an active Rally deployment::
 
     ultimum-rally-az-verification
 
-For example::
+Settings come from ``az_validation`` in ``/etc/ultimum/ultimum.yaml``;
+environment variables override them for one run, for example::
 
     RALLY_AVAILABILITY_ZONE=cz01 RALLY_FLAVOR_NAME=m1.small \
         ultimum-rally-az-verification
@@ -65,8 +66,19 @@ the task and generating its HTML report.
 Configuration
 =============
 
+All settings live in the ``az_validation`` section of
+``/etc/ultimum/ultimum.yaml``; ``ultimum/ultimum.yaml.example`` documents
+every key and its default. The wrapper reads the file with the same loader
+as ``ultimum-rally``, so unknown keys or wrong types stop it before Rally
+starts. ``RALLY_ULTIMUM_CONFIG`` selects another file.
+
+For one run, the ``RALLY_<KEY>`` environment variable overrides the matching
+key (``flavor_name`` -> ``RALLY_FLAVOR_NAME``, ``project.name`` ->
+``RALLY_PROJECT_NAME``). A variable set to an empty string also overrides it.
+Without the YAML file the defaults below apply. The keys are:
+
 ``RALLY_SERVICES``
-    Comma-separated parts to run, in order. Default:
+    Parts to run, in order (YAML list; the variable is comma-separated). Default:
     ``barbican,cinder,heat,nova,octavia``.
 
 ``RALLY_AVAILABILITY_ZONE``

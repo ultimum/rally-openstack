@@ -273,8 +273,10 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
             "RALLY_TASK_DIR": str(ROOT / "tasks"),
             "RALLY_AZ_PLUGIN_DIR": str(PLUGIN_DIR),
             "RALLY_PROJECT_NAME": PROJECT["name"],
+            "RALLY_ULTIMUM_CONFIG": str(self.directory / "absent.yaml"),
             **overrides,
         }
+        env = {key: value for key, value in env.items() if value is not None}
         result = subprocess.run(["bash", str(WRAPPER)], env=env,
                                 capture_output=True, text=True, timeout=10)
         calls = [json.loads(line)
@@ -361,7 +363,7 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
                 name: yaml-project
                 domain: YamlDomain
             """))
-        result, calls = self.run_wrapper(RALLY_PROJECT_NAME="",
+        result, calls = self.run_wrapper(RALLY_PROJECT_NAME=None,
                                          RALLY_ULTIMUM_CONFIG=str(config))
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         args = json.loads(self.task_calls(calls)[0][6])
@@ -377,7 +379,7 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
               project:
                 name: identity-project
             """))
-        _, calls = self.run_wrapper(RALLY_PROJECT_NAME="",
+        _, calls = self.run_wrapper(RALLY_PROJECT_NAME=None,
                                     RALLY_ULTIMUM_CONFIG=str(config))
         args = json.loads(self.task_calls(calls)[0][6])
         self.assertEqual("identity-project", args["project_name"])
@@ -385,8 +387,56 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
 
     def test_missing_project_does_not_start_a_task(self):
         result, calls = self.run_wrapper(
-            RALLY_PROJECT_NAME="",
-            RALLY_ULTIMUM_CONFIG=str(self.directory / "missing.yaml"))
+            RALLY_PROJECT_NAME=None)
         self.assertNotEqual(0, result.returncode)
         self.assertIn("RALLY_PROJECT_NAME", result.stdout)
+        self.assertFalse(self.task_calls(calls))
+
+    def test_settings_come_from_ultimum_yaml_and_env_overrides_them(self):
+        config = self.directory / "ultimum.yaml"
+        config.write_text(textwrap.dedent("""\
+            schema_version: 1
+            az_validation:
+              project:
+                name: yaml-project
+              services: [nova, octavia]
+              image_name: yaml-image
+              flavor_name: yaml-flavor
+              availability_zone: yaml-az
+              octavia_availability_zone: ""
+              volume_type: yaml-type
+              cinder_backup: true
+              floating_network: ""
+              heat_image: /images/heat.qcow2
+            """))
+        result, calls = self.run_wrapper(
+            RALLY_PROJECT_NAME=None, RALLY_ULTIMUM_CONFIG=str(config),
+            RALLY_FLAVOR_NAME="env-flavor")
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        args = json.loads(self.task_calls(calls)[0][6])
+        self.assertEqual("yaml-project", args["project_name"])
+        self.assertEqual(["nova", "octavia"], args["services"])
+        self.assertEqual("yaml-image", args["image_name"])
+        self.assertEqual("env-flavor", args["flavor_name"])
+        self.assertEqual("m1.medium", args["resize_flavor_name"])
+        self.assertEqual("yaml-az", args["availability_zone"])
+        self.assertEqual("yaml-az", args["volume_availability_zone"])
+        self.assertEqual("", args["octavia_availability_zone"])
+        self.assertEqual("yaml-type", args["volume_type"])
+        self.assertTrue(args["cinder_backup"])
+        self.assertEqual("", args["floating_network"])
+        self.assertEqual("/images/heat.qcow2", args["heat_image_location"])
+
+    def test_invalid_ultimum_yaml_does_not_start_a_task(self):
+        config = self.directory / "ultimum.yaml"
+        config.write_text("schema_version: 1\naz_validation:\n  typo: 1\n")
+        result, calls = self.run_wrapper(RALLY_ULTIMUM_CONFIG=str(config))
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("az_validation.typo", result.stderr)
+        self.assertFalse(self.task_calls(calls))
+
+    def test_invalid_boolean_does_not_start_a_task(self):
+        result, calls = self.run_wrapper(RALLY_CINDER_BACKUP="yes")
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("CINDER_BACKUP must be true or false", result.stdout)
         self.assertFalse(self.task_calls(calls))

@@ -60,14 +60,42 @@ identity:
     roles: [member]
 
 az_validation:
-  # Project used by ultimum-rally-az-verification for every workload.
-  # It must exist; Rally never creates or deletes it. Each workload creates
-  # the temporary users it needs in this project (role "member") and deletes
-  # them afterwards. Admin-only APIs still use admin.openrc.
-  # null = identity.project.name / identity.project.domain.
+  # Settings of ultimum-rally-az-verification (tasks/ultimum/az-production.yaml).
+  # A RALLY_<KEY> environment variable overrides any key below for one run,
+  # e.g. RALLY_FLAVOR_NAME=m1.small or RALLY_PROJECT_NAME=other.
+  #
+  # Project used for every workload. It must exist; Rally never creates or
+  # deletes it. Each workload creates the temporary users it needs in this
+  # project (role "member") and deletes them afterwards. Admin-only APIs
+  # still use admin.openrc. null = identity.project.name / .domain.
   project:
     name: null
     domain: null
+  # Parts to run, in this order: barbican, cinder, heat, nova, octavia.
+  services: [barbican, cinder, heat, nova, octavia]
+  image_name: "^Cirros.*"      # Image name or regex for servers and volumes.
+  flavor_name: m1.tiny
+  resize_flavor_name: m1.medium
+  # Every server is booted in this Nova AZ. "" = let Nova choose.
+  availability_zone: cz03
+  # Every volume (also attached, boot and restore volumes, Heat volumes).
+  # null = availability_zone; "" = Cinder default.
+  volume_availability_zone: null
+  # Octavia AZ of every load balancer; it must exist in Octavia.
+  # null = availability_zone; "" = Octavia default.
+  octavia_availability_zone: null
+  network_availability_zone: null  # availability_zone_hints of networks.
+  volume_type: cz03            # "" = Cinder default type.
+  volume_backend_name: huawei-fc   # Used by the volume type keys workload.
+  cinder_backup: false         # true adds the Cinder backup workloads.
+  # true runs Quotas.*_update(_and_delete), which change and reset the
+  # quotas of the project above.
+  project_quota_tests: false
+  # External network UUID for the floating IP workloads; "" skips them.
+  floating_network: ab983650-138d-449b-8782-c91861e65fd0
+  # Image file or URL uploaded for Heat servers. null = CirrOS prepared by
+  # ultimum-rally-glance-verification, else its download URL.
+  heat_image: null
 
 rally:
   # Separate deployment with one predefined user/project.
