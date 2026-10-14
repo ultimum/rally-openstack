@@ -97,7 +97,10 @@ Exceptions and side effects:
   Cinder. When ``snapshot_server`` deletes its image, the plugin deletes
   those volume snapshots and the then unused root volume as well.
 * ``boot_and_bounce_server`` uses compute API 2.87 to rescue a volume-backed
-  server.
+  server. Nova rescues a volume-backed server only when its image has
+  ``hw_rescue_device`` or ``hw_rescue_bus`` set (e.g.
+  ``openstack image set --property hw_rescue_device=disk <image>``);
+  otherwise the rescue fails with "Cannot rescue a volume-backed instance".
 
 Admin environment
 =================
@@ -128,6 +131,15 @@ Without the YAML file the defaults below apply. The keys are:
 ``RALLY_SERVICES``
     Parts to run, in order (YAML list; the variable is comma-separated). Default:
     ``barbican,cinder,heat,nova,octavia``.
+
+``RALLY_SCENARIOS``
+    Only as an environment variable, for one-off runs: comma-separated
+    scenario names whose subtasks run, out of the selected services; a name
+    ending in ``*`` is a prefix. Example:
+    ``RALLY_SCENARIOS=NovaServers.boot_and_bounce_server`` or
+    ``RALLY_SCENARIOS=NovaServers.*``. Default: empty, every workload. When
+    nothing matches, task validation fails with
+    ``NoWorkloadMatchesSelectedScenarios``.
 
 ``RALLY_AVAILABILITY_ZONE``
     Nova AZ of every server. Default: ``cz03``.

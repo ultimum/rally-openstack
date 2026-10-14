@@ -6,11 +6,15 @@
   ultimum/plugins/availability_zone.py and ultimum/plugins/project_users.py.
   Every workload runs in the existing project "project_name": its users
   context creates temporary users there and never creates a project.
+  "scenarios" (optional) keeps only the subtasks running one of these
+  scenarios, e.g. ["NovaServers.boot_and_bounce_server"]; a name ending in
+  "*" is a prefix, e.g. "NovaServers.*".
 #}
 {% set project_domain = project_domain | default("Default") %}
 {% set project_users = {"project": {"name": project_name, "domain": project_domain}} %}
 {% set project_quota_tests = project_quota_tests | default(false) %}
 {% set services = services | default(["barbican", "cinder", "heat", "nova", "octavia"]) %}
+{% set scenarios = scenarios | default([]) %}
 {% set image_name = image_name | default("^Cirros.*") %}
 {% set flavor_name = flavor_name | default("m1.tiny") %}
 {% set resize_flavor_name = resize_flavor_name | default("m1.medium") %}
@@ -34,6 +38,27 @@
     volume attachments and load balancers are created in the configured
     availability zones. All workloads run in project {{ project_name }}.
   subtasks:
+{%- set kept = namespace(count=0) %}
 {%- for service in services %}
-{% include "az/" ~ service ~ ".yaml" %}
+{%- set rendered %}{% include "az/" ~ service ~ ".yaml" %}{% endset %}
+{#- Subtasks are the list items indented by four spaces. #}
+{%- for subtask in ("\n" ~ rendered).split("\n    -\n") if subtask.strip() %}
+{%- set selected = namespace(keep=not scenarios) %}
+{%- for name in scenarios %}
+{%- set key = " " ~ (name[:-1] if name.endswith("*") else name ~ ":") %}
+{%- if key in subtask %}{% set selected.keep = true %}{% endif %}
 {%- endfor %}
+{%- if selected.keep %}
+{%- set kept.count = kept.count + 1 %}
+    -
+{{ subtask }}
+{%- endif %}
+{%- endfor %}
+{%- endfor %}
+{%- if not kept.count %}
+{#- No such scenario plugin exists, so validation names the problem. #}
+    -
+      title: No workload of {{ services | join(", ") }} runs {{ scenarios | join(", ") }}
+      scenario:
+        NoWorkloadMatchesSelectedScenarios: {}
+{%- endif %}

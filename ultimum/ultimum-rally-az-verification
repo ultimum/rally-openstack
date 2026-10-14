@@ -326,6 +326,23 @@ if [ -z "${SERVICES_JSON}" ]; then
     die "No services selected in RALLY_SERVICES"
 fi
 
+# RALLY_SCENARIOS (only from the environment, for one-off runs) keeps the
+# workloads of these scenarios, e.g. NovaServers.boot_and_bounce_server or
+# the prefix NovaServers.*; empty runs every workload of the services.
+SCENARIOS="${RALLY_SCENARIOS:-}"
+SCENARIOS_JSON=""
+
+# An array, so "NovaServers.*" is never expanded as a file glob.
+IFS=', ' read -r -a SCENARIO_LIST <<< "${SCENARIOS}"
+
+for scenario in "${SCENARIO_LIST[@]}"; do
+    case "${scenario}" in
+        *[!A-Za-z0-9_.*]*|'*'*|*'*'?*)
+            die "Invalid scenario '${scenario}' in RALLY_SCENARIOS; use names like NovaServers.boot_and_bounce_server or NovaServers.*" ;;
+    esac
+    SCENARIOS_JSON="${SCENARIOS_JSON:+${SCENARIOS_JSON},}\"${scenario}\""
+done
+
 
 #
 # Heat image
@@ -345,6 +362,7 @@ fi
 #
 
 TASK_ARGS="{\"services\":[${SERVICES_JSON}]"
+TASK_ARGS+=",\"scenarios\":[${SCENARIOS_JSON}]"
 TASK_ARGS+=",\"project_name\":$(json_string "${PROJECT_NAME}")"
 TASK_ARGS+=",\"project_domain\":$(json_string "${PROJECT_DOMAIN}")"
 TASK_ARGS+=",\"project_quota_tests\":${PROJECT_QUOTA_TESTS}"
@@ -368,6 +386,7 @@ info "Rally environment:       ${RALLY_ENV}"
 info "Project:                 ${PROJECT_DOMAIN}/${PROJECT_NAME}"
 info "Project quota tests:     ${PROJECT_QUOTA_TESTS}"
 info "Services:                ${SERVICES}"
+info "Scenarios:               ${SCENARIOS:-<all>}"
 info "Compute AZ:              ${AVAILABILITY_ZONE}"
 info "Volume AZ:               ${VOLUME_AVAILABILITY_ZONE:-<cinder default>}"
 info "Octavia AZ:              ${OCTAVIA_AVAILABILITY_ZONE:-<octavia default>}"

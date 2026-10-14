@@ -378,6 +378,46 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
         args = json.loads(self.task_calls(calls)[0][8])
         self.assertEqual(str(image), args["heat_image_location"])
 
+    def test_scenarios_select_workloads(self):
+        task = render_task(
+            {"scenarios": ["NovaServers.boot_and_bounce_server"]})
+        self.assertEqual(["NovaServers.boot_and_bounce_server tests"],
+                         [s["title"] for s in task["subtasks"]])
+        task = render_task({"scenarios": ["NovaServers.*",
+                                          "CinderVolumes.create_volume"]})
+        names = {name for workload in workloads(task)
+                 for name in workload["scenario"]}
+        self.assertIn("NovaServers.boot_and_bounce_server", names)
+        self.assertIn("CinderVolumes.create_volume", names)
+        for name in names - {"CinderVolumes.create_volume"}:
+            self.assertTrue(name.startswith("NovaServers."), name)
+
+    def test_no_selected_scenario_fails_validation(self):
+        task = render_task({"services": ["nova"],
+                            "scenarios": ["CinderVolumes.create_volume"]})
+        self.assertEqual(["NoWorkloadMatchesSelectedScenarios"],
+                         [name for workload in workloads(task)
+                          for name in workload["scenario"]])
+
+    def test_wrapper_passes_scenarios(self):
+        result, calls = self.run_wrapper(
+            RALLY_SCENARIOS=("NovaServers.boot_and_bounce_server,"
+                             " NovaServers.*"))
+        self.assertEqual(0, result.returncode, result.stdout)
+        args = json.loads(self.task_calls(calls)[0][8])
+        self.assertEqual(["NovaServers.boot_and_bounce_server",
+                          "NovaServers.*"], args["scenarios"])
+        result, calls = self.run_wrapper()
+        self.assertEqual([], json.loads(self.task_calls(calls)[0][8])[
+            "scenarios"])
+
+    def test_invalid_scenario_does_not_start_a_task(self):
+        for value in ("*", "Nova*Servers", "Nova Servers;rm"):
+            result, calls = self.run_wrapper(RALLY_SCENARIOS=value)
+            self.assertNotEqual(0, result.returncode, value)
+            self.assertIn("Invalid scenario", result.stdout)
+            self.assertFalse(self.task_calls(calls))
+
     def test_unknown_service_does_not_start_a_task(self):
         result, calls = self.run_wrapper(RALLY_SERVICES="nova,swift")
         self.assertNotEqual(0, result.returncode)
