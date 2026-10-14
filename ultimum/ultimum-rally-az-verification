@@ -380,29 +380,13 @@ ok "Rally task found: ${TASK}"
 
 
 #
-# Validate task
-#
-
-info "Validating Rally task"
-
-if ! rally --plugin-paths "${PLUGIN_PATHS}" task validate \
-    --env "${RALLY_ENV}" \
-    "${TASK}" \
-    --task-args \
-    "${TASK_ARGS}"; then
-
-    die "Rally task validation failed"
-fi
-
-ok "Rally task validation passed"
-
-
-#
 # Run
 #
 
 printf "\n"
 printf "${BOLD}Starting AZ validation${RESET}\n\n"
+
+# rally task start validates the task itself before running any workload.
 
 rally --plugin-paths "${PLUGIN_PATHS}" task start \
     --env "${RALLY_ENV}" \

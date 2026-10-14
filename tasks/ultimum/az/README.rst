@@ -66,7 +66,8 @@ environment variables override them for one run, for example::
     RALLY_SERVICES=nova,cinder RALLY_VOLUME_TYPE=ssd \
         ultimum-rally-az-verification
 
-The wrapper validates and starts the task once, passing
+The wrapper starts the task once (``rally task start`` validates it before
+running any workload, so there is no separate ``rally task validate``), passing
 ``--plugin-paths`` with ``ultimum/plugins/availability_zone.py``,
 ``ultimum/plugins/project_users.py`` and
 ``ultimum/plugins/boot_from_volume.py``, and returns

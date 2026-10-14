@@ -279,11 +279,11 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
                     target.write(json.dumps(spec) + "\\n")
                 sys.exit(int(os.environ.get("ENV_CREATE_RC", "0")))
             if args[:2] == ["task", "validate"]:
+                sys.exit(int(os.environ.get("VALIDATE_RC", "0")))
+            if args[:2] == ["task", "start"]:
                 with open(os.environ["COMMAND_LOG"] + ".env", "w") as env:
                     json.dump({k: v for k, v in os.environ.items()
                                if k.startswith("ULTIMUM_RALLY_")}, env)
-                sys.exit(int(os.environ.get("VALIDATE_RC", "0")))
-            if args[:2] == ["task", "start"]:
                 sys.exit(int(os.environ.get("START_RC", "0")))
             if args[:2] == ["task", "list"]:
                 print("test-task-uuid")
@@ -337,8 +337,8 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
             RALLY_SERVICES="nova,cinder")
         self.assertEqual(0, result.returncode, result.stdout)
         task_calls = self.task_calls(calls)
-        self.assertEqual(["validate", "start"],
-                         [call[3] for call in task_calls])
+        # rally task start validates itself; no separate validate call.
+        self.assertEqual(["start"], [call[3] for call in task_calls])
         for call in task_calls:
             self.assertEqual(["--plugin-paths", PLUGINS], call[:2])
             self.assertEqual("--env", call[4])
@@ -386,10 +386,6 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
     def test_failures_are_returned(self):
         result, calls = self.run_wrapper(START_RC="7")
         self.assertEqual(7, result.returncode, result.stdout)
-        result, calls = self.run_wrapper(VALIDATE_RC="9")
-        self.assertNotEqual(0, result.returncode)
-        self.assertEqual(["validate"],
-                         [call[3] for call in self.task_calls(calls)])
 
     def test_missing_plugin_does_not_start_a_task(self):
         result, calls = self.run_wrapper(
@@ -570,7 +566,7 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stdout)
         self.assertFalse([call for call in calls
                           if call[:2] == ["env", "create"]])
-        self.assertEqual(2, len(self.task_calls(calls)))
+        self.assertEqual(1, len(self.task_calls(calls)))
 
     def test_failed_admin_environment_does_not_start_a_task(self):
         result, calls = self.run_wrapper(ENV_CREATE_RC="3")
