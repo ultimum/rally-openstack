@@ -3,8 +3,8 @@
 {% set flavor_name = flavor_name | default("m1.tiny") %}
 {% set volume_type = volume_type | default("cz03") %}
 {% set availability_zone = availability_zone | default("cz03") %}
-{% set resize_flavor_name = resize_flavor_name | default("m1.small") %}
-{% set floating_network = floating_network | default("") %}
+{% set resize_flavor_name = resize_flavor_name | default("m1.medium") %}
+{% set floating_network = floating_network | default("ab983650-138d-449b-8782-c91861e65fd0") %}
 ---
   version: 2
   title: Ultimum Nova Production Validation
@@ -78,6 +78,7 @@
               times: 2
               concurrency: 2
           contexts:
+            network: {router: {}}
             users:
               tenants: 2
               users_per_tenant: 2
@@ -113,6 +114,7 @@
               times: 2
               concurrency: 2
           contexts:
+            network: {router: {}}
             users:
               tenants: 2
               users_per_tenant: 2
@@ -133,6 +135,7 @@
               times: 2
               concurrency: 2
           contexts:
+            network: {router: {}}
             users:
               tenants: 2
               users_per_tenant: 1
@@ -149,6 +152,7 @@
               times: 4
               concurrency: 2
           contexts:
+            network: {router: {}}
             users:
               tenants: 2
               users_per_tenant: 2
@@ -168,6 +172,7 @@
               times: 2
               concurrency: 2
           contexts:
+            network: {router: {}}
             users:
               tenants: 2
               users_per_tenant: 1
@@ -238,6 +243,7 @@
           times: 2
           concurrency: 2
       contexts:
+        network: {router: {}}
         users:
           tenants: 2
           users_per_tenant: 1
@@ -254,6 +260,7 @@
           times: 2
           concurrency: 2
       contexts:
+        network: {router: {}}
         users:
           tenants: 2
           users_per_tenant: 1
@@ -270,6 +277,7 @@
           times: 2
           concurrency: 2
       contexts:
+        network: {router: {}}
         users:
           tenants: 2
           users_per_tenant: 1
@@ -288,6 +296,7 @@
           times: 2
           concurrency: 2
       contexts:
+        network: {router: {}}
         users:
           tenants: 2
           users_per_tenant: 1
@@ -309,25 +318,10 @@
         users:
           tenants: 2
           users_per_tenant: 1
-        network: {}
-    -
-      title: NovaServers.boot_server_associate_and_dissociate_floating_ip tests
-      scenario:
-        NovaServers.boot_server_associate_and_dissociate_floating_ip:
-          flavor:
-            name: {{flavor_name}}
-          image:
-            name: {{image_name}}
-          floating_network: "{{floating_network}}"
-      runner:
-        constant:
-          times: 2
-          concurrency: 2
-      contexts:
-        users:
-          tenants: 2
-          users_per_tenant: 2
-        network: {}
+        network:
+          router:
+            external_gateway_info:
+              network_id: "{{floating_network}}"
 {% endif %}
     -
       title: NovaServers.list_servers tests
@@ -364,6 +358,7 @@
           times: 2
           concurrency: 2
       contexts:
+        network: {router: {}}
         users:
           tenants: 2
           users_per_tenant: 1
@@ -380,6 +375,7 @@
           times: 2
           concurrency: 2
       contexts:
+        network: {router: {}}
         users:
           tenants: 2
           users_per_tenant: 1
@@ -399,6 +395,7 @@
               times: 4
               concurrency: 2
           contexts:
+            network: {router: {}}
             users:
               tenants: 2
               users_per_tenant: 2
@@ -420,6 +417,7 @@
               times: 2
               concurrency: 2
           contexts:
+            network: {router: {}}
             users:
               tenants: 2
               users_per_tenant: 1
@@ -438,6 +436,7 @@
               times: 2
               concurrency: 2
           contexts:
+            network: {router: {}}
             users:
               tenants: 2
               users_per_tenant: 1
@@ -460,6 +459,7 @@
               times: 2
               concurrency: 2
           contexts:
+            network: {router: {}}
             users:
               tenants: 2
               users_per_tenant: 2
@@ -488,6 +488,7 @@
           times: 2
           concurrency: 2
       contexts:
+        network: {router: {}}
         users:
           tenants: 2
           users_per_tenant: 1
@@ -513,6 +514,7 @@
           times: 2
           concurrency: 2
       contexts:
+        network: {router: {}}
         api_versions:
           cinder:
             version: 3.42
@@ -543,6 +545,7 @@
           times: 2
           concurrency: 2
       contexts:
+        network: {router: {}}
         users:
           tenants: 2
           users_per_tenant: 1
@@ -577,6 +580,7 @@
           times: 2
           concurrency: 2
       contexts:
+        network: {router: {}}
         users:
           tenants: 2
           users_per_tenant: 1
@@ -593,6 +597,7 @@
           times: 2
           concurrency: 2
       contexts:
+        network: {router: {}}
         users:
           tenants: 2
           users_per_tenant: 1
@@ -615,6 +620,7 @@
           times: 2
           concurrency: 2
       contexts:
+        network: {router: {}}
         users:
           tenants: 2
           users_per_tenant: 2
@@ -637,6 +643,7 @@
           times: 2
           concurrency: 2
       contexts:
+        network: {router: {}}
         users:
           tenants: 2
           users_per_tenant: 2
@@ -655,6 +662,7 @@
               times: 2
               concurrency: 2
           contexts:
+            network: {router: {}}
             users:
               tenants: 2
               users_per_tenant: 2
@@ -670,6 +678,7 @@
               times: 2
               concurrency: 2
           contexts:
+            network: {router: {}}
             users:
               tenants: 2
               users_per_tenant: 2
@@ -686,12 +695,13 @@
                 name: "^ram64$"
               image:
                 name: {{image_name}}
-              auto_assign_nic: false
+              auto_assign_nic: true
           runner:
             constant:
               times: 2
               concurrency: 2
           contexts:
+            network: {router: {}}
             users:
               tenants: 2
               users_per_tenant: 2
@@ -712,6 +722,7 @@
               times: 2
               concurrency: 2
           contexts:
+            network: {router: {}}
             users:
               tenants: 2
               users_per_tenant: 2
@@ -727,6 +738,7 @@
               times: 4
               concurrency: 2
           contexts:
+            network: {router: {}}
             users:
               tenants: 1
               users_per_tenant: 2
@@ -903,11 +915,13 @@
           image:
             name: {{image_name}}
           count: 5
+          auto_assign_nic: true
       runner:
         constant:
           times: 2
           concurrency: 2
       contexts:
+        network: {router: {}}
         users:
           tenants: 2
           users_per_tenant: 2
@@ -924,14 +938,6 @@
         users:
           tenants: 2
           users_per_tenant: 2
-    -
-      title: NovaAggregates.list_aggregates tests
-      scenario:
-        NovaAggregates.list_aggregates: {}
-      runner:
-        constant:
-          concurrency: 2
-          times : 4
     -
       title: NovaAggregates.create_aggregate_add_and_remove_host tests
       scenario:
@@ -998,17 +1004,6 @@
           times: 4
           concurrency: 2
     -
-      title: NovaFlavors.create_and_delete_flavor tests
-      scenario:
-        NovaFlavors.create_and_delete_flavor:
-          ram: 500
-          vcpus : 1
-          disk: 1
-      runner:
-        constant:
-          concurrency: 2
-          times: 10
-    -
       title: NovaFlavors.create_and_list_flavor_access tests
       scenario:
         NovaFlavors.create_and_list_flavor_access:
@@ -1047,6 +1042,7 @@
           times: 4
           concurrency: 2
       contexts:
+        network: {router: {}}
         users:
           tenants: 2
           users_per_tenant: 2
@@ -1069,6 +1065,7 @@
           times: 2
           concurrency: 2
       contexts:
+        network: {router: {}}
         users:
           tenants: 2
           users_per_tenant: 2
@@ -1135,7 +1132,8 @@
           network_create_args: {}
           subnet_create_args: {}
           subnet_cidr_start: "1.1.0.0/30"
-          boot_server_args: {}
+          boot_server_args:
+            auto_assign_nic: true
       runner:
         constant:
           times: 2
@@ -1187,6 +1185,7 @@
           times: 2
           concurrency: 2
       contexts:
+        network: {router: {}}
         users:
           tenants: 1
           users_per_tenant: 1

@@ -56,11 +56,13 @@ Configuration
     Default: ``false`` (58 workloads; 65 when enabled).
 
 ``RALLY_RESIZE_FLAVOR_NAME``
-    Nova resize target flavor. Default: ``m1.small``.
+    Nova resize target flavor. Default: ``m1.medium``.
 
 ``RALLY_FLOATING_NETWORK``
-    External network for the two optional Nova floating IP workloads.
-    Default: empty (72 workloads; 74 with a network configured).
+    External network UUID for both the router gateway and floating IPs in
+    the Nova floating IP workload. Defaults to
+    ``ab983650-138d-449b-8782-c91861e65fd0`` (71 workloads).
+    Set it to an empty string to skip that workload (70 workloads).
 
 ``CIRROS_VERSION``
     CirrOS version prepared by the Glance wrapper. Default: ``0.6.3``.
@@ -73,7 +75,7 @@ All its workloads require a zero failure rate.
 For example::
 
     RALLY_CINDER_BACKUP=true ultimum-rally-cinder-verification
-    RALLY_FLOATING_NETWORK=public ultimum-rally-nova-verification
+    RALLY_FLOATING_NETWORK=ab983650-138d-449b-8782-c91861e65fd0 ultimum-rally-nova-verification
 
 Glance can also be run directly with ``qcow2_image``, ``raw_image`` and
 ``qcow2_image_url`` task arguments. The first two are local upload paths;
