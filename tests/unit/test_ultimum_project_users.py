@@ -136,3 +136,30 @@ class ProjectUserGeneratorTestCase(test.ScenarioTestCase):
             generator.cleanup()
         create.assert_called_once_with(1)
         cleanup.assert_called_once_with()
+
+    def test_project_from_environment_when_config_has_none(self):
+        # Rally's validation context is {"users@openstack": {}}.
+        self.context["config"]["users_under_test"] = {}
+        with mock.patch.dict(self.module.os.environ, {
+                "ULTIMUM_RALLY_PROJECT_NAME": "rally-az",
+                "ULTIMUM_RALLY_PROJECT_DOMAIN": "Dom"}):
+            generator = self.module.ProjectUserGenerator(self.context)
+        self.assertEqual({"name": "rally-az", "domain": "Dom"},
+                         generator.config["project"])
+        self.assertEqual("Dom", generator.config["project_domain"])
+        self.assertEqual(
+            {"p-id": {"id": "p-id", "name": "rally-az", "users": []}},
+            generator._create_tenants(1))
+        self.assertFalse(self.keystone.create_project.called)
+
+    def test_config_project_wins_over_environment(self):
+        with mock.patch.dict(self.module.os.environ, {
+                "ULTIMUM_RALLY_PROJECT_NAME": "other"}):
+            generator = self.module.ProjectUserGenerator(self.context)
+        self.assertEqual("rally-az", generator.config["project"]["name"])
+
+    def test_without_project_and_environment_behaves_like_upstream(self):
+        self.context["config"]["users_under_test"] = {}
+        with mock.patch.dict(self.module.os.environ, clear=True):
+            generator = self.module.ProjectUserGenerator(self.context)
+        self.assertNotIn("project", generator.config)

@@ -209,6 +209,11 @@ fi
 
 ok "Test project: ${PROJECT_DOMAIN}/${PROJECT_NAME}"
 
+# project_users.py also uses this project for the users context that Rally
+# builds for task validation, so validation creates no project either.
+export ULTIMUM_RALLY_PROJECT_NAME="${PROJECT_NAME}"
+export ULTIMUM_RALLY_PROJECT_DOMAIN="${PROJECT_DOMAIN}"
+
 
 #
 # Admin environment

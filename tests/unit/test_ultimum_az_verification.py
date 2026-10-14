@@ -267,6 +267,9 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
                     target.write(json.dumps(spec) + "\\n")
                 sys.exit(int(os.environ.get("ENV_CREATE_RC", "0")))
             if args[:2] == ["task", "validate"]:
+                with open(os.environ["COMMAND_LOG"] + ".env", "w") as env:
+                    json.dump({k: v for k, v in os.environ.items()
+                               if k.startswith("ULTIMUM_RALLY_")}, env)
                 sys.exit(int(os.environ.get("VALIDATE_RC", "0")))
             if args[:2] == ["task", "start"]:
                 sys.exit(int(os.environ.get("START_RC", "0")))
@@ -398,6 +401,13 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
         args = json.loads(self.task_calls(calls)[0][8])
         self.assertEqual("yaml-project", args["project_name"])
         self.assertEqual("YamlDomain", args["project_domain"])
+
+    def test_rally_gets_the_project_for_validation_users(self):
+        result, _ = self.run_wrapper(RALLY_PROJECT_DOMAIN="Dom")
+        self.assertEqual(0, result.returncode, result.stdout)
+        env = json.loads(pathlib.Path(str(self.log) + ".env").read_text())
+        self.assertEqual({"ULTIMUM_RALLY_PROJECT_NAME": "rally-az",
+                          "ULTIMUM_RALLY_PROJECT_DOMAIN": "Dom"}, env)
 
     def test_project_falls_back_to_identity_project(self):
         config = self.directory / "ultimum.yaml"

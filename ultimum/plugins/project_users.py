@@ -7,9 +7,15 @@ With it, the context creates no project: it looks up the given project, creates
 the temporary users requested by ``users_per_tenant`` inside it and deletes
 only those users at cleanup. The project, its default security group and
 everything else in it are left untouched.
+
+``ULTIMUM_RALLY_PROJECT_NAME`` (and ``ULTIMUM_RALLY_PROJECT_DOMAIN``) in the
+environment of the Rally process supply the project for every ``users``
+context that does not set one, including the context Rally builds for task
+validation; so with the variable set no project is created at all.
 """
 
 import copy
+import os
 
 from rally import plugins
 
@@ -39,6 +45,16 @@ PROJECT = {
 }
 
 
+def default_project():
+    """The project from the Rally process environment, if any."""
+    name = os.environ.get("ULTIMUM_RALLY_PROJECT_NAME")
+    if not name:
+        return None
+    return {"name": name,
+            "domain": os.environ.get("ULTIMUM_RALLY_PROJECT_DOMAIN")
+            or "Default"}
+
+
 def _schema():
     schema = copy.deepcopy(users.UserGenerator.CONFIG_SCHEMA)
     schema["anyOf"][0]["properties"]["project"] = PROJECT
@@ -59,13 +75,14 @@ class ProjectUserGenerator(users.UserGenerator):
 
     def __init__(self, context):
         super().__init__(context)
-        project = self.config.get("project")
+        project = self.config.get("project") or default_project()
         if project and not self.existing_users:
             if self.config.get("tenants", 1) != 1:
                 raise exceptions.ContextSetupFailure(
                     ctx_name=self.get_name(),
                     msg="'tenants' must be 1 when 'project' is set.")
             with self.config.unlocked():
+                self.config["project"] = project
                 self.config["tenants"] = 1
                 self.config["project_domain"] = project.get("domain",
                                                             "Default")

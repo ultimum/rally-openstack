@@ -15,7 +15,12 @@ All workloads run in **one existing project** that you define. Rally never
 creates or deletes a project. Each workload creates the temporary users it
 needs (``users_per_tenant``, role ``member``) inside that project and deletes
 only those users afterwards; the project, its default security group and
-other resources in it are left alone. Resources created by the workloads are
+other resources in it are left alone. This also applies to the users Rally
+creates for task validation (flavor, image and volume type checks): the
+wrapper passes the project to Rally as ``ULTIMUM_RALLY_PROJECT_NAME`` /
+``ULTIMUM_RALLY_PROJECT_DOMAIN``. Flavors, images and volume types used by the
+task must therefore be visible to this project (public, or with project
+access). Resources created by the workloads are
 removed by Rally's cleanup, which matches only names generated for the task.
 
 Set the project in ``/etc/ultimum/ultimum.yaml``::
