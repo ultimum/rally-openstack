@@ -94,6 +94,10 @@ az_validation:
   # Retries of API calls whose TCP connection could not be opened (nothing
   # was sent, so retrying is safe). Covers short outages of e.g. a VPN.
   connect_retries: 5
+  # Seconds to open a connection (TCP + TLS) before it is retried; waiting
+  # for the response keeps Rally's own timeout. 0 = wait for the kernel
+  # (about 2 minutes).
+  connect_timeout: 10
   # true runs Quotas.*_update(_and_delete), which change and reset the
   # quotas of the project above.
   project_quota_tests: false

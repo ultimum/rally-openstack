@@ -195,6 +195,7 @@ VOLUME_BACKEND_NAME="$(setting VOLUME_BACKEND_NAME huawei-fc)"
 CINDER_BACKUP="$(setting CINDER_BACKUP false)"
 BOOT_VOLUME_SIZE="$(setting BOOT_VOLUME_SIZE 1)"
 CONNECT_RETRIES="$(setting CONNECT_RETRIES 5)"
+CONNECT_TIMEOUT="$(setting CONNECT_TIMEOUT 10)"
 FLOATING_NETWORK="$(setting FLOATING_NETWORK ab983650-138d-449b-8782-c91861e65fd0)"
 HEAT_IMAGE="$(setting HEAT_IMAGE "")"
 
@@ -204,6 +205,10 @@ esac
 
 case "${CONNECT_RETRIES}" in
     ''|*[!0-9]*) die "CONNECT_RETRIES must be a number >= 0, not '${CONNECT_RETRIES}'" ;;
+esac
+
+case "${CONNECT_TIMEOUT}" in
+    ''|*[!0-9]*) die "CONNECT_TIMEOUT must be a number of seconds >= 0, not '${CONNECT_TIMEOUT}'" ;;
 esac
 
 for flag in PROJECT_QUOTA_TESTS CINDER_BACKUP; do
@@ -228,8 +233,10 @@ export ULTIMUM_RALLY_BOOT_FROM_VOLUME=true
 export ULTIMUM_RALLY_BOOT_VOLUME_SIZE="${BOOT_VOLUME_SIZE}"
 export ULTIMUM_RALLY_BOOT_VOLUME_TYPE="${VOLUME_TYPE}"
 export ULTIMUM_RALLY_BOOT_VOLUME_AZ="${VOLUME_AVAILABILITY_ZONE}"
-# connect_retries.py retries API calls whose connection could not be opened.
+# connect_retries.py retries API calls whose connection could not be opened
+# within CONNECT_TIMEOUT seconds.
 export ULTIMUM_RALLY_CONNECT_RETRIES="${CONNECT_RETRIES}"
+export ULTIMUM_RALLY_CONNECT_TIMEOUT="${CONNECT_TIMEOUT}"
 
 
 #
@@ -370,6 +377,7 @@ info "Resize flavor:           ${RESIZE_FLAVOR_NAME}"
 info "Volume type:             ${VOLUME_TYPE:-<cinder default>}"
 info "Boot volume size:        ${BOOT_VOLUME_SIZE} GiB"
 info "Connect retries:         ${CONNECT_RETRIES}"
+info "Connect timeout:         ${CONNECT_TIMEOUT} s"
 info "Floating network:        ${FLOATING_NETWORK:-<skipped>}"
 info "Heat image source:       ${HEAT_IMAGE}"
 

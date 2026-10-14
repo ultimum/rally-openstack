@@ -421,7 +421,8 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
                           "ULTIMUM_RALLY_BOOT_VOLUME_SIZE": "1",
                           "ULTIMUM_RALLY_BOOT_VOLUME_TYPE": "cz03",
                           "ULTIMUM_RALLY_BOOT_VOLUME_AZ": "cz03",
-                          "ULTIMUM_RALLY_CONNECT_RETRIES": "5"}, env)
+                          "ULTIMUM_RALLY_CONNECT_RETRIES": "5",
+                          "ULTIMUM_RALLY_CONNECT_TIMEOUT": "10"}, env)
 
     def test_boot_volume_follows_volume_settings(self):
         result, _ = self.run_wrapper(RALLY_BOOT_VOLUME_SIZE="3",
@@ -440,6 +441,16 @@ class UltimumAZWrapperTestCase(unittest.TestCase):
         self.assertEqual("0", env["ULTIMUM_RALLY_CONNECT_RETRIES"])
         result, calls = self.run_wrapper(RALLY_CONNECT_RETRIES="-1")
         self.assertNotEqual(0, result.returncode)
+        self.assertFalse(self.task_calls(calls))
+
+    def test_connect_timeout_can_be_changed(self):
+        result, _ = self.run_wrapper(RALLY_CONNECT_TIMEOUT="0")
+        self.assertEqual(0, result.returncode, result.stdout)
+        env = json.loads(pathlib.Path(str(self.log) + ".env").read_text())
+        self.assertEqual("0", env["ULTIMUM_RALLY_CONNECT_TIMEOUT"])
+        result, calls = self.run_wrapper(RALLY_CONNECT_TIMEOUT="soon")
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("CONNECT_TIMEOUT must be a number", result.stdout)
         self.assertFalse(self.task_calls(calls))
 
     def test_invalid_boot_volume_size_does_not_start_a_task(self):

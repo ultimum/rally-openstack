@@ -26,11 +26,13 @@ PLUGIN = (pathlib.Path(__file__).resolve().parents[2]
 def load_plugin():
     """Import the plugin, keeping TCPKeepAliveAdapter unpatched here."""
     original = session.TCPKeepAliveAdapter.__init__
+    original_send = session.TCPKeepAliveAdapter.send
     spec = importlib.util.spec_from_file_location(
         "ultimum_connect_retries_under_test", PLUGIN)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     session.TCPKeepAliveAdapter.__init__ = original
+    session.TCPKeepAliveAdapter.send = original_send
     return module
 
 
@@ -46,6 +48,10 @@ class ConnectRetriesTestCase(test.TestCase):
         self.module = load_plugin()
         patcher = mock.patch.object(session.TCPKeepAliveAdapter, "__init__",
                                     self.module.adapter_init)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(session.TCPKeepAliveAdapter, "send",
+                                    self.module.adapter_send)
         patcher.start()
         self.addCleanup(patcher.stop)
         # No real waiting between attempts.
@@ -124,3 +130,43 @@ class ConnectRetriesTestCase(test.TestCase):
         for conn in accepted:
             conn.close()
         self.assertEqual(1, len(accepted))
+
+
+class ConnectTimeoutTestCase(test.TestCase):
+    def setUp(self):
+        super().setUp()
+        self.module = load_plugin()
+
+    def env(self, value):
+        return mock.patch.dict(self.module.os.environ,
+                               {"ULTIMUM_RALLY_CONNECT_TIMEOUT": value})
+
+    def test_total_timeout_becomes_the_read_timeout(self):
+        with self.env("10"):
+            self.assertEqual((10.0, 180.0),
+                             self.module.split_timeout(180.0))
+            self.assertEqual((10.0, None), self.module.split_timeout(None))
+            # Never longer than the whole request may take.
+            self.assertEqual((0.5, 0.5), self.module.split_timeout(0.5))
+            # Callers that split it themselves keep their values.
+            self.assertEqual((3, 60), self.module.split_timeout((3, 60)))
+
+    def test_disabled_or_invalid_keeps_the_timeout(self):
+        for value in ("0", "", "soon"):
+            with self.env(value):
+                self.assertEqual(180.0, self.module.split_timeout(180.0))
+
+    def test_session_requests_get_the_connect_timeout(self):
+        sent = []
+
+        def send(adapter, request, **kwargs):
+            sent.append(kwargs["timeout"])
+            raise RuntimeError("stop")
+
+        with self.env("10"), \
+                mock.patch.object(self.module, "upstream_send", send), \
+                mock.patch.object(session.TCPKeepAliveAdapter, "send",
+                                  self.module.adapter_send):
+            sess = session.Session(timeout=180)
+            self.assertRaises(RuntimeError, sess.get, "https://cloud:5000/")
+        self.assertEqual([(10.0, 180.0)], sent)

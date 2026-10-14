@@ -175,6 +175,13 @@ Without the YAML file the defaults below apply. The keys are:
     twice. Read timeouts and API errors fail as before. ``0`` disables it.
     Default: ``5`` (waits 4, 8, 16, 32 s between attempts).
 
+``RALLY_CONNECT_TIMEOUT``
+    Seconds an API call may take to open its connection (TCP and TLS
+    handshake) before it fails and ``RALLY_CONNECT_RETRIES`` retries it from
+    a new source port. Waiting for the response keeps Rally's
+    ``openstack_client_http_timeout``. ``0`` leaves the connect to the
+    kernel's SYN retransmissions (about 2 minutes). Default: ``10``.
+
 ``RALLY_FLOATING_NETWORK``
     External network UUID for the two Nova floating IP workloads. Defaults
     to ``ab983650-138d-449b-8782-c91861e65fd0``; an empty string skips them.
