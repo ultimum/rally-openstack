@@ -32,14 +32,16 @@ def load_plugin():
 
     original = (nova_utils.NovaScenario._boot_server,
                 nova_utils.NovaScenario._boot_servers,
-                nova_utils.NovaScenario._delete_image)
+                nova_utils.NovaScenario._delete_image,
+                nova_utils.NovaScenario._rescue_server)
     spec = importlib.util.spec_from_file_location(
         "ultimum_boot_from_volume_under_test", PLUGIN)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     (nova_utils.NovaScenario._boot_server,
      nova_utils.NovaScenario._boot_servers,
-     nova_utils.NovaScenario._delete_image) = original
+     nova_utils.NovaScenario._delete_image,
+     nova_utils.NovaScenario._rescue_server) = original
     return module
 
 
@@ -195,3 +197,50 @@ class BootFromVolumeTestCase(test.TestCase):
             self.module._delete_image(self.scenario, mock.Mock(id="i"))
         self.assertTrue(delete_image.called)
         self.assertFalse(self.cinder.delete_snapshot.called)
+
+
+class RescueTestCase(test.TestCase):
+    def setUp(self):
+        super().setUp()
+        from novaclient.v2 import servers
+
+        self.module = load_plugin()
+        # Rally's _rescue_server calls server.rescue() without an image.
+        self.upstream = mock.patch.object(
+            self.module, "upstream_rescue_server",
+            side_effect=lambda scenario, server: server.rescue()).start()
+        self.addCleanup(mock.patch.stopall)
+        self.manager = mock.Mock()
+        self.scenario = mock.Mock()
+        self.volumes = self.scenario.clients.return_value.volumes
+        self.volumes.get.side_effect = lambda volume_id: {
+            "data": mock.Mock(bootable="false", volume_image_metadata=None),
+            "root": mock.Mock(bootable="true", volume_image_metadata={
+                "image_id": "image-id"}),
+        }[volume_id]
+        self.server = servers.Server(self.manager, {
+            "id": "server-id", "image": "",
+            "os-extended-volumes:volumes_attached": [
+                {"id": "data"}, {"id": "root"}]}, loaded=True)
+
+    def rescue(self, environ):
+        with mock.patch.dict(self.module.os.environ, environ, clear=True):
+            self.module._rescue_server(self.scenario, self.server)
+
+    def test_volume_backed_server_is_rescued_with_its_boot_image(self):
+        self.rescue(ENABLED)
+        self.manager.rescue.assert_called_once_with(
+            self.server, None, "image-id")
+        # The server object is left as it was.
+        self.assertNotIn("rescue", vars(self.server))
+
+    def test_image_backed_server_is_rescued_unchanged(self):
+        self.server.image = {"id": "own-image"}
+        self.rescue(ENABLED)
+        self.manager.rescue.assert_called_once_with(self.server, None, None)
+        self.volumes.get.assert_not_called()
+
+    def test_disabled_rescue_is_unchanged(self):
+        self.rescue({})
+        self.manager.rescue.assert_called_once_with(self.server, None, None)
+        self.volumes.get.assert_not_called()

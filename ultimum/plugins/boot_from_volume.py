@@ -22,6 +22,12 @@ environment of the Rally process:
   Cinder, which then keeps that volume from being deleted with the server.
   ``NovaScenario._delete_image`` therefore also deletes the volume snapshots
   the image refers to and their source volumes once nothing uses them.
+* A volume-backed server has no image of its own, so a rescue without an
+  image fails on the compute host and the server just stays ACTIVE.
+  ``NovaScenario._rescue_server`` therefore rescues such a server with the
+  image its boot volume was created from (what Nova uses for image-backed
+  servers). Nova needs ``hw_rescue_device`` and ``hw_rescue_bus`` on that
+  image and compute API 2.87.
 
 Settings: ``ULTIMUM_RALLY_BOOT_VOLUME_SIZE`` (GiB, raised to what the image
 needs), ``ULTIMUM_RALLY_BOOT_VOLUME_TYPE`` and ``ULTIMUM_RALLY_BOOT_VOLUME_AZ``
@@ -53,6 +59,7 @@ MAPPINGS = ("block_device_mapping", "block_device_mapping_v2")
 upstream_boot_server = nova_utils.NovaScenario._boot_server
 upstream_boot_servers = nova_utils.NovaScenario._boot_servers
 upstream_delete_image = nova_utils.NovaScenario._delete_image
+upstream_rescue_server = nova_utils.NovaScenario._rescue_server
 
 
 def settings():
@@ -199,6 +206,36 @@ def _delete_image(self, image):
     delete_image_snapshots(self, snapshot_ids)
 
 
+def boot_volume_image_id(scenario, server):
+    """The image a volume-backed server's boot volume was created from."""
+    if getattr(server, "image", None):
+        return None
+    cinder = scenario.clients("cinder")
+    for attached in getattr(server, "os-extended-volumes:volumes_attached",
+                            None) or []:
+        volume = cinder.volumes.get(attached["id"])
+        metadata = getattr(volume, "volume_image_metadata", None) or {}
+        if str(volume.bootable).lower() == "true" and metadata.get(
+                "image_id"):
+            return metadata["image_id"]
+    return None
+
+
+def _rescue_server(self, server):
+    image_id = boot_volume_image_id(self, server) if settings() else None
+    if image_id is None:
+        return upstream_rescue_server(self, server)
+    # Rally calls server.rescue() without an image; add it for this call.
+    rescue = server.rescue
+    server.rescue = lambda *args, **kwargs: rescue(
+        *args, **{"image": image_id, **kwargs})
+    try:
+        return upstream_rescue_server(self, server)
+    finally:
+        del server.rescue
+
+
 nova_utils.NovaScenario._boot_server = _boot_server
 nova_utils.NovaScenario._boot_servers = _boot_servers
 nova_utils.NovaScenario._delete_image = _delete_image
+nova_utils.NovaScenario._rescue_server = _rescue_server

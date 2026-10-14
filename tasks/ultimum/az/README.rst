@@ -97,10 +97,16 @@ Exceptions and side effects:
   Cinder. When ``snapshot_server`` deletes its image, the plugin deletes
   those volume snapshots and the then unused root volume as well.
 * ``boot_and_bounce_server`` uses compute API 2.87 to rescue a volume-backed
-  server. Nova rescues a volume-backed server only when its image has
-  ``hw_rescue_device`` or ``hw_rescue_bus`` set (e.g.
-  ``openstack image set --property hw_rescue_device=disk <image>``);
-  otherwise the rescue fails with "Cannot rescue a volume-backed instance".
+  server. Nova rescues a volume-backed server only when its image has both
+  ``hw_rescue_device`` and ``hw_rescue_bus`` set (e.g.
+  ``openstack image set --property hw_rescue_device=disk
+  --property hw_rescue_bus=virtio <image>``); otherwise the rescue fails
+  with "Cannot rescue a volume-backed instance". The properties are copied
+  to a volume when it is created from the image, so only new servers get
+  them. A volume-backed server has no image of its own, and a rescue
+  without an image fails on the compute host (the server just stays
+  ACTIVE), so ``boot_from_volume.py`` passes the image its boot volume was
+  created from as the rescue image.
 
 Admin environment
 =================
