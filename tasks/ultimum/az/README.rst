@@ -33,6 +33,10 @@ wrapper stops before starting Rally. Use the domain name, not its ID.
 Admin-only APIs (aggregates, flavors, hypervisors, services, volume types,
 QoS, encryption types, quotas, role assignment) still use the admin
 admin credentials from ``admin.rc`` (see *Admin environment* below).
+``BarbicanOrders.create_certificate_and_delete`` from ``rally-jobs`` is not
+included: certificate orders were removed from Barbican in 2024.1 (18.0.0)
+and from python-barbicanclient in 7.0.0, so the scenario always fails with
+``'OrderManager' object has no attribute 'create_certificate'``.
 Barbican scenarios are upstream admin scenarios: their secrets, containers
 and orders are created in the admin's project, not in the test project.
 

@@ -222,6 +222,11 @@ class UltimumAZTaskTestCase(unittest.TestCase):
 
     def test_optional_workloads(self):
         default = {s["title"] for s in render_task({})["subtasks"]}
+        # Certificate orders no longer exist in Barbican or its client.
+        self.assertNotIn("BarbicanOrders.create_certificate_and_delete",
+                         {s["title"] for s in render_task(
+                             dict(self.ARGS, project_quota_tests=True))[
+                             "subtasks"]})
         self.assertNotIn("CinderVolumes.create_volume_backup tests", default)
         self.assertIn("NovaServers.boot_and_associate_floating_ip tests",
                       default)

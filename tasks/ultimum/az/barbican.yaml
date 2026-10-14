@@ -123,16 +123,6 @@
       contexts:
         users: {{ dict(project_users, users_per_tenant=1) | tojson }}
     -
-      title: BarbicanOrders.create_certificate_and_delete
-      scenario:
-        BarbicanOrders.create_certificate_and_delete: {}
-      runner:
-        constant:
-          times: 4
-          concurrency: 2
-      contexts:
-        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
-    -
       title: BarbicanOrders.list
       scenario:
         BarbicanOrders.list: {}
