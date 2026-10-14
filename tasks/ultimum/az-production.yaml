@@ -1,0 +1,38 @@
+{#
+  Ultimum validation with every server, volume and load balancer created in
+  the selected availability zones. Each service lives in az/<service>.yaml;
+  "services" selects which of them run. Run it with
+  ultimum-rally-az-verification, which also loads the AZ plugins from
+  ultimum/plugins/availability_zone.py and ultimum/plugins/project_users.py.
+  Every workload runs in the existing project "project_name": its users
+  context creates temporary users there and never creates a project.
+#}
+{% set project_domain = project_domain | default("Default") %}
+{% set project_users = {"project": {"name": project_name, "domain": project_domain}} %}
+{% set project_quota_tests = project_quota_tests | default(false) %}
+{% set services = services | default(["barbican", "cinder", "heat", "nova", "octavia"]) %}
+{% set image_name = image_name | default("^Cirros.*") %}
+{% set flavor_name = flavor_name | default("m1.tiny") %}
+{% set resize_flavor_name = resize_flavor_name | default("m1.medium") %}
+{% set availability_zone = availability_zone | default("cz03") or none %}
+{% set volume_availability_zone = volume_availability_zone | default(availability_zone) or none %}
+{% set octavia_availability_zone = octavia_availability_zone | default(availability_zone) or none %}
+{% set network_availability_zone = network_availability_zone | default("") or none %}
+{% set volume_type = volume_type | default("cz03") or none %}
+{% set volume_backend_name = volume_backend_name | default("huawei-fc") %}
+{% set cinder_backup = cinder_backup | default(false) %}
+{% set floating_network = floating_network | default("ab983650-138d-449b-8782-c91861e65fd0") %}
+{% set heat_template_dir = heat_template_dir | default("/opt/rally-openstack/tasks/ultimum/az/heat") %}
+{% set heat_image_location = heat_image_location | default("https://download.cirros-cloud.net/0.6.3/cirros-0.6.3-x86_64-disk.img") %}
+{% set network_create_args = {"availability_zone_hints": [network_availability_zone]} if network_availability_zone else {} %}
+---
+  version: 2
+  title: Ultimum AZ Validation
+  description: >
+    Barbican, Cinder, Heat, Nova and Octavia validation. Servers, volumes,
+    volume attachments and load balancers are created in the configured
+    availability zones. All workloads run in project {{ project_name }}.
+  subtasks:
+{%- for service in services %}
+{% include "az/" ~ service ~ ".yaml" %}
+{%- endfor %}

@@ -1,0 +1,326 @@
+#!/usr/bin/env bash
+
+set -o pipefail
+
+DATA_DIR="${RALLY_DATA_DIR:-/data}"
+TASK_DIR="${RALLY_TASK_DIR:-/opt/rally-openstack/tasks}"
+PLUGIN_DIR="${RALLY_AZ_PLUGIN_DIR:-/opt/ultimum/plugins}"
+ULTIMUM_CONFIG="${RALLY_ULTIMUM_CONFIG:-/etc/ultimum/ultimum.yaml}"
+PROJECT_QUOTA_TESTS="${RALLY_PROJECT_QUOTA_TESTS:-false}"
+SERVICES="${RALLY_SERVICES:-barbican,cinder,heat,nova,octavia}"
+
+IMAGE_NAME="${RALLY_IMAGE_NAME:-^Cirros.*}"
+FLAVOR_NAME="${RALLY_FLAVOR_NAME:-m1.tiny}"
+RESIZE_FLAVOR_NAME="${RALLY_RESIZE_FLAVOR_NAME:-m1.medium}"
+AVAILABILITY_ZONE="${RALLY_AVAILABILITY_ZONE:-cz03}"
+VOLUME_AVAILABILITY_ZONE="${RALLY_VOLUME_AVAILABILITY_ZONE-${AVAILABILITY_ZONE}}"
+OCTAVIA_AVAILABILITY_ZONE="${RALLY_OCTAVIA_AVAILABILITY_ZONE-${AVAILABILITY_ZONE}}"
+NETWORK_AVAILABILITY_ZONE="${RALLY_NETWORK_AVAILABILITY_ZONE:-}"
+VOLUME_TYPE="${RALLY_VOLUME_TYPE-cz03}"
+VOLUME_BACKEND_NAME="${RALLY_VOLUME_BACKEND_NAME:-huawei-fc}"
+CINDER_BACKUP="${RALLY_CINDER_BACKUP:-false}"
+FLOATING_NETWORK="${RALLY_FLOATING_NETWORK-ab983650-138d-449b-8782-c91861e65fd0}"
+
+CIRROS_VERSION="${CIRROS_VERSION:-0.6.3}"
+CIRROS_QCOW2="${DATA_DIR}/extra/cirros-${CIRROS_VERSION}-x86_64-disk.img"
+CIRROS_URL="https://download.cirros-cloud.net/${CIRROS_VERSION}/cirros-${CIRROS_VERSION}-x86_64-disk.img"
+
+TASK="${TASK_DIR}/ultimum/az-production.yaml"
+HEAT_TEMPLATE_DIR="${TASK_DIR}/ultimum/az/heat"
+KNOWN_SERVICES="barbican cinder heat nova octavia"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+
+info() {
+    printf "${CYAN}==>${RESET} %s\n" "$*"
+}
+
+ok() {
+    printf "${GREEN}[ OK ]${RESET} %s\n" "$*"
+}
+
+warn() {
+    printf "${YELLOW}[WARN]${RESET} %s\n" "$*"
+}
+
+fail() {
+    printf "${RED}[FAIL]${RESET} %s\n" "$*"
+}
+
+die() {
+    fail "$*"
+    exit 1
+}
+
+json_string() {
+    local value="${1//\\/\\\\}"
+    printf '"%s"' "${value//\"/\\\"}"
+}
+
+
+printf "\n${BOLD}Ultimum Rally AZ validation${RESET}\n"
+printf "============================\n\n"
+
+
+#
+# Data volume
+#
+
+info "Checking Rally data volume"
+
+if [ ! -d "${DATA_DIR}" ]; then
+    die "Missing data volume: ${DATA_DIR}"
+fi
+
+ok "Data volume available: ${DATA_DIR}"
+
+
+#
+# Requirements
+#
+
+info "Checking required commands"
+
+for cmd in rally; do
+    if ! command -v "${cmd}" >/dev/null 2>&1; then
+        die "Required command '${cmd}' is not installed"
+    fi
+done
+
+ok "Required commands available"
+
+
+#
+# Rally deployment
+#
+
+info "Checking Rally deployment"
+
+if ! rally deployment show >/dev/null 2>&1; then
+    die "No active Rally deployment"
+fi
+
+ok "Rally deployment is active"
+
+
+#
+# AZ and project plugins
+#
+
+info "Checking AZ and project plugins"
+
+PLUGINS="availability_zone.py project_users.py"
+LOCAL_PLUGIN_DIR="$(dirname "$(readlink -f "$0")")/plugins"
+
+if [ -z "${RALLY_AZ_PLUGIN_DIR:-}" ] && [ ! -d "${PLUGIN_DIR}" ] \
+    && [ -d "${LOCAL_PLUGIN_DIR}" ]; then
+    PLUGIN_DIR="${LOCAL_PLUGIN_DIR}"
+fi
+
+PLUGIN_PATHS=""
+
+for plugin in ${PLUGINS}; do
+    if [ ! -f "${PLUGIN_DIR}/${plugin}" ]; then
+        die "Plugin not found: ${PLUGIN_DIR}/${plugin}"
+    fi
+    PLUGIN_PATHS="${PLUGIN_PATHS:+${PLUGIN_PATHS},}${PLUGIN_DIR}/${plugin}"
+done
+
+ok "Plugins found: ${PLUGIN_PATHS}"
+
+
+#
+# Project
+#
+
+info "Resolving test project"
+
+if [ -n "${RALLY_PROJECT_NAME:-}" ]; then
+    PROJECT_NAME="${RALLY_PROJECT_NAME}"
+    PROJECT_DOMAIN="${RALLY_PROJECT_DOMAIN:-Default}"
+else
+    if [ ! -f "${ULTIMUM_CONFIG}" ]; then
+        die "Missing ${ULTIMUM_CONFIG}; set az_validation.project or RALLY_PROJECT_NAME"
+    fi
+    if [ -d /opt/ultimum/ultimum_validation ]; then
+        ULTIMUM_LIB=/opt/ultimum
+    else
+        ULTIMUM_LIB="$(dirname "$(readlink -f "$0")")"
+    fi
+    # Same loader as ultimum-rally, so the YAML is validated identically.
+    if ! PROJECT="$(python3 - "${ULTIMUM_LIB}" "${ULTIMUM_CONFIG}" <<'EOF'
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from ultimum_validation import config
+
+try:
+    cfg = config.load(sys.argv[2])
+except config.InvalidError as exc:
+    sys.exit(f"Invalid {sys.argv[2]}: {exc}")
+project = cfg["az_validation"]["project"]
+identity = cfg["identity"]["project"]
+print(project["name"] or identity["name"] or "")
+print(project["domain"] or identity["domain"] or "Default")
+EOF
+    )"; then
+        die "Could not read the test project from ${ULTIMUM_CONFIG}"
+    fi
+    PROJECT_NAME="$(printf '%s\n' "${PROJECT}" | sed -n 1p)"
+    PROJECT_DOMAIN="$(printf '%s\n' "${PROJECT}" | sed -n 2p)"
+    PROJECT_DOMAIN="${RALLY_PROJECT_DOMAIN:-${PROJECT_DOMAIN}}"
+fi
+
+if [ -z "${PROJECT_NAME}" ]; then
+    die "No test project: set az_validation.project.name in ${ULTIMUM_CONFIG}"
+fi
+
+ok "Test project: ${PROJECT_DOMAIN}/${PROJECT_NAME}"
+
+
+#
+# Services
+#
+
+SERVICES_JSON=""
+
+for service in ${SERVICES//,/ }; do
+    case " ${KNOWN_SERVICES} " in
+        *" ${service} "*) ;;
+        *) die "Unknown service '${service}'; use: ${KNOWN_SERVICES// /,}" ;;
+    esac
+    SERVICES_JSON="${SERVICES_JSON:+${SERVICES_JSON},}\"${service}\""
+done
+
+if [ -z "${SERVICES_JSON}" ]; then
+    die "No services selected in RALLY_SERVICES"
+fi
+
+
+#
+# Heat image
+#
+
+if [ -n "${RALLY_HEAT_IMAGE:-}" ]; then
+    HEAT_IMAGE="${RALLY_HEAT_IMAGE}"
+elif [ -f "${CIRROS_QCOW2}" ]; then
+    HEAT_IMAGE="${CIRROS_QCOW2}"
+else
+    HEAT_IMAGE="${CIRROS_URL}"
+fi
+
+
+#
+# Task arguments
+#
+
+TASK_ARGS="{\"services\":[${SERVICES_JSON}]"
+TASK_ARGS+=",\"project_name\":$(json_string "${PROJECT_NAME}")"
+TASK_ARGS+=",\"project_domain\":$(json_string "${PROJECT_DOMAIN}")"
+TASK_ARGS+=",\"project_quota_tests\":${PROJECT_QUOTA_TESTS}"
+TASK_ARGS+=",\"image_name\":$(json_string "${IMAGE_NAME}")"
+TASK_ARGS+=",\"flavor_name\":$(json_string "${FLAVOR_NAME}")"
+TASK_ARGS+=",\"resize_flavor_name\":$(json_string "${RESIZE_FLAVOR_NAME}")"
+TASK_ARGS+=",\"availability_zone\":$(json_string "${AVAILABILITY_ZONE}")"
+TASK_ARGS+=",\"volume_availability_zone\":$(json_string "${VOLUME_AVAILABILITY_ZONE}")"
+TASK_ARGS+=",\"octavia_availability_zone\":$(json_string "${OCTAVIA_AVAILABILITY_ZONE}")"
+TASK_ARGS+=",\"network_availability_zone\":$(json_string "${NETWORK_AVAILABILITY_ZONE}")"
+TASK_ARGS+=",\"volume_type\":$(json_string "${VOLUME_TYPE}")"
+TASK_ARGS+=",\"volume_backend_name\":$(json_string "${VOLUME_BACKEND_NAME}")"
+TASK_ARGS+=",\"cinder_backup\":${CINDER_BACKUP}"
+TASK_ARGS+=",\"floating_network\":$(json_string "${FLOATING_NETWORK}")"
+TASK_ARGS+=",\"heat_template_dir\":$(json_string "${HEAT_TEMPLATE_DIR}")"
+TASK_ARGS+=",\"heat_image_location\":$(json_string "${HEAT_IMAGE}")}"
+
+printf "\n"
+info "Project:                 ${PROJECT_DOMAIN}/${PROJECT_NAME}"
+info "Project quota tests:     ${PROJECT_QUOTA_TESTS}"
+info "Services:                ${SERVICES}"
+info "Compute AZ:              ${AVAILABILITY_ZONE}"
+info "Volume AZ:               ${VOLUME_AVAILABILITY_ZONE:-<cinder default>}"
+info "Octavia AZ:              ${OCTAVIA_AVAILABILITY_ZONE:-<octavia default>}"
+info "Network AZ hint:         ${NETWORK_AVAILABILITY_ZONE:-<none>}"
+info "Image / flavor:          ${IMAGE_NAME} / ${FLAVOR_NAME}"
+info "Resize flavor:           ${RESIZE_FLAVOR_NAME}"
+info "Volume type:             ${VOLUME_TYPE:-<cinder default>}"
+info "Floating network:        ${FLOATING_NETWORK:-<skipped>}"
+info "Heat image source:       ${HEAT_IMAGE}"
+
+
+#
+# Ultimum Rally AZ task
+#
+
+printf "\n"
+
+if [ ! -f "${TASK}" ]; then
+    die "Rally task not found: ${TASK}"
+fi
+
+ok "Rally task found: ${TASK}"
+
+
+#
+# Validate task
+#
+
+info "Validating Rally task"
+
+if ! rally --plugin-paths "${PLUGIN_PATHS}" task validate \
+    "${TASK}" \
+    --task-args \
+    "${TASK_ARGS}"; then
+
+    die "Rally task validation failed"
+fi
+
+ok "Rally task validation passed"
+
+
+#
+# Run
+#
+
+printf "\n"
+printf "${BOLD}Starting AZ validation${RESET}\n\n"
+
+rally --plugin-paths "${PLUGIN_PATHS}" task start \
+    "${TASK}" \
+    --task-args \
+    "${TASK_ARGS}"
+
+RC=$?
+
+printf "\n"
+
+if [ "${RC}" -eq 0 ]; then
+    ok "AZ validation finished successfully"
+else
+    fail "AZ validation failed"
+fi
+
+
+#
+# Last task
+#
+
+TASK_UUID="$(rally task list --uuids-only 2>/dev/null | head -n1 || true)"
+
+if [ -n "${TASK_UUID}" ]; then
+    printf "\n"
+    info "Task UUID: ${TASK_UUID}"
+
+    printf "\nUseful commands:\n"
+    printf "  rally task detailed ${TASK_UUID}\n"
+    printf "  rally task report ${TASK_UUID} --out ${DATA_DIR}/az-report.html\n"
+fi
+
+printf "\n"
+
+exit "${RC}"

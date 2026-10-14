@@ -1,5 +1,9 @@
-{% set image_name = "^(cirros.*-disk|TestVM)$" %}
-{% set flavor_name = "m1.tiny" %}
+{% set image_name = image_name | default("^Cirros.*") %}
+{% set flavor_name = flavor_name | default("m1.tiny") %}
+{% set volume_type = volume_type | default("lvmdriver-1") %}
+{% set volume_backend_name = volume_backend_name | default("LVM_iSCSI") %}
+{% set cinder_backup = cinder_backup | default(false) %}
+{% set availability_zone = availability_zone | default("cz03") %}
 ---
   version: 2
   title: Task for gate-rally-dsvm-rally-cinder job
@@ -146,8 +150,8 @@
             roles:
               - admin
             images:
-              image_url: "~/.rally/extra/dummy_image.raw"
-              disk_format: "raw"
+              image_url: "https://download.cirros-cloud.net/0.6.3/cirros-0.6.3-x86_64-disk.img"
+              disk_format: "qcow2"
               container_format: "bare"
               images_per_tenant: 1
               image_name: "image-context-test"
@@ -462,6 +466,10 @@
             name: {{image_name}}
           flavor:
             name: {{flavor_name}}
+          create_vm_params:
+            availability_zone: {{availability_zone}}
+          create_volume_params:
+            availability_zone: {{availability_zone}}
       runner:
         constant:
           times: 2
@@ -476,12 +484,14 @@
         -
           scenario:
             CinderVolumes.create_snapshot_and_attach_volume:
-              volume_type: "lvmdriver-1"
+              volume_type: {{volume_type}}
               size: 1
               image:
                 name: {{image_name}}
               flavor:
                 name: {{flavor_name}}
+              create_vm_params:
+                availability_zone: {{availability_zone}}
           runner:
             constant:
               times: 2
@@ -494,12 +504,14 @@
           description: "Create a volume using volume type created in context."
           scenario:
             CinderVolumes.create_snapshot_and_attach_volume:
-              volume_type: "test"
+              volume_type: {{volume_type}}
               size: 1
               image:
                 name: {{image_name}}
               flavor:
                 name: {{flavor_name}}
+              create_vm_params:
+                availability_zone: {{availability_zone}}
           runner:
             constant:
               times: 2
@@ -508,8 +520,6 @@
             users:
               tenants: 2
               users_per_tenant: 2
-            volume_types:
-              - "test"
     -
       title: CinderVolumes.create_and_delete_snapshot tests
       scenario:
@@ -568,7 +578,7 @@
           scenario:
             CinderVolumes.create_and_upload_volume_to_image:
               size: 1
-              volume_type: test
+              volume_type: {{volume_type}}
               image:
                 name: {{image_name}}
           runner:
@@ -579,8 +589,7 @@
             users:
               tenants: 1
               users_per_tenant: 1
-            volume_types:
-              - test
+{% if cinder_backup %}
     -
       title: CinderVolumes.create_volume_backup tests
       workloads:
@@ -686,6 +695,7 @@
             users:
               tenants: 1
               users_per_tenant: 1
+{% endif %}
     -
       title: CinderVolumes.create_nested_snapshots_and_attach_volume tests
       scenario:
@@ -698,6 +708,11 @@
             name: {{image_name}}
           flavor:
             name: {{flavor_name}}
+          create_volume_kwargs:
+            availability_zone: {{availability_zone}}
+            volume_type: {{volume_type}}
+          create_vm_params:
+            availability_zone: {{availability_zone}}
       runner:
         constant:
           times: 2
@@ -946,7 +961,7 @@
         CinderVolumeTypes.create_and_set_volume_type_keys:
           description: "rally tests creating types"
           volume_type_key:
-            volume_backend_name: "LVM_iSCSI"
+            volume_backend_name: {{volume_backend_name}}
       runner:
         constant:
           times: 4

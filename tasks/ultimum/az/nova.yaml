@@ -1,0 +1,867 @@
+{% set compute_az = availability_zone | tojson %}
+{% set zonal_server = {"availability_zone": availability_zone} | tojson %}
+{% set zonal_volume = {"availability_zone": volume_availability_zone, "volume_type": volume_type} | tojson %}
+{% set network = {"router": {}, "network_create_args": network_create_args} | tojson %}
+{% set flavor = {"name": flavor_name} | tojson %}
+{% set image = {"name": image_name} | tojson %}
+{% set resize_flavor = {"name": resize_flavor_name} | tojson %}
+    -
+      title: Authenticate.validate_nova tests
+      scenario:
+        Authenticate.validate_nova:
+          repetitions: 2
+      runner:
+        constant:
+          times: 10
+          concurrency: 5
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+    -
+      title: Quotas test cases
+      workloads:
+{%- if project_quota_tests %}
+        -
+          scenario:
+            Quotas.nova_update_and_delete:
+              max_quota: 1024
+          runner:
+            constant:
+              times: 4
+              concurrency: 1
+          contexts:
+            users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+{%- endif %}
+        -
+          scenario:
+            Quotas.nova_get: {}
+          runner:
+            constant:
+              times: 4
+              concurrency: 2
+          contexts:
+            users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+{%- if project_quota_tests %}
+        -
+          scenario:
+            Quotas.nova_update:
+              max_quota: 1024
+          runner:
+            constant:
+              times: 4
+              concurrency: 1
+          contexts:
+            users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+{%- endif %}
+    -
+      title: NovaServers.boot_and_delete_server tests
+      workloads:
+        -
+          scenario:
+            NovaServers.boot_and_delete_server:
+              flavor: {{ flavor }}
+              image: {{ image }}
+              availability_zone: {{ compute_az }}
+          runner:
+            constant:
+              times: 2
+              concurrency: 2
+          contexts:
+            network: {{ network }}
+            users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+        -
+          scenario:
+            NovaServers.boot_and_delete_server:
+              flavor: {{ flavor }}
+              image: {{ image }}
+              auto_assign_nic: true
+              availability_zone: {{ compute_az }}
+          runner:
+            constant:
+              times: 2
+              concurrency: 2
+          contexts:
+            users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+            network:
+              start_cidr: "10.2.0.0/24"
+              networks_per_tenant: 2
+              network_create_args: {{ network_create_args | tojson }}
+        -
+          scenario:
+            NovaServers.boot_and_delete_server:
+              flavor: {{ flavor }}
+              image: {{ image }}
+              force_delete: true
+              availability_zone: {{ compute_az }}
+          runner:
+            constant:
+              times: 2
+              concurrency: 2
+          contexts:
+            network: {{ network }}
+            users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+    -
+      title: NovaServers.boot_and_list_server tests
+      workloads:
+        -
+          scenario:
+            NovaServers.boot_and_list_server:
+              flavor: {{ flavor }}
+              image: {{ image }}
+              detailed: true
+              availability_zone: {{ compute_az }}
+          runner:
+            constant:
+              times: 2
+              concurrency: 2
+          contexts:
+            network: {{ network }}
+            users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+        -
+          scenario:
+            NovaServers.boot_and_list_server:
+              flavor: {{ flavor }}
+              image: {{ image }}
+              detailed: true
+              availability_zone: {{ compute_az }}
+          runner:
+            constant:
+              times: 4
+              concurrency: 2
+          contexts:
+            network: {{ network }}
+            users: {{ dict(project_users, users_per_tenant=2, user_choice_method="round_robin") | tojson }}
+        -
+          scenario:
+            NovaServers.boot_and_list_server:
+              flavor: {{ flavor }}
+              image: {{ image }}
+              files:
+                /home/bootfile: "rallytest"
+              detailed: true
+              availability_zone: {{ compute_az }}
+          runner:
+            constant:
+              times: 2
+              concurrency: 2
+          contexts:
+            network: {{ network }}
+            users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+    -
+      title: NovaServerGroups.create_and_get_server_group tests
+      workloads:
+{%- for policies in (["affinity"], ["anti-affinity"]) %}
+        -
+          scenario:
+            NovaServerGroups.create_and_get_server_group:
+              policies: {{ policies | tojson }}
+          runner:
+            constant:
+              times: 4
+              concurrency: 2
+          contexts:
+            users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+{%- endfor %}
+    -
+      title: NovaServerGroups.create_and_list_server_groups tests
+      workloads:
+{%- for policies in (["affinity"], ["anti-affinity"]) %}
+        -
+          scenario:
+            NovaServerGroups.create_and_list_server_groups:
+              policies: {{ policies | tojson }}
+              all_projects: false
+          runner:
+            constant:
+              times: 4
+              concurrency: 2
+          contexts:
+            users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+{%- endfor %}
+    -
+      title: NovaServerGroups.create_and_delete_server_group tests
+      workloads:
+{%- for policies in (["affinity"], ["anti-affinity"]) %}
+        -
+          scenario:
+            NovaServerGroups.create_and_delete_server_group:
+              policies: {{ policies | tojson }}
+          runner:
+            constant:
+              times: 4
+              concurrency: 2
+          contexts:
+            users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+{%- endfor %}
+{%- for action in ("suspend_and_resume_server", "pause_and_unpause_server", "shelve_and_unshelve_server") %}
+    -
+      title: NovaServers.{{ action }} tests
+      scenario:
+        NovaServers.{{ action }}:
+          flavor: {{ flavor }}
+          image: {{ image }}
+          availability_zone: {{ compute_az }}
+      runner:
+        constant:
+          times: 2
+          concurrency: 2
+      contexts:
+        network: {{ network }}
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+{%- endfor %}
+    -
+      title: NovaServers.boot_and_rebuild_server tests
+      scenario:
+        NovaServers.boot_and_rebuild_server:
+          flavor: {{ flavor }}
+          from_image: {{ image }}
+          to_image: {{ image }}
+          availability_zone: {{ compute_az }}
+      runner:
+        constant:
+          times: 2
+          concurrency: 2
+      contexts:
+        network: {{ network }}
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+{%- if floating_network %}
+{%- for action in ("boot_and_associate_floating_ip", "boot_server_associate_and_dissociate_floating_ip") %}
+    -
+      title: NovaServers.{{ action }} tests
+      scenario:
+        NovaServers.{{ action }}:
+          flavor: {{ flavor }}
+          image: {{ image }}
+          floating_network: {{ floating_network | tojson }}
+          availability_zone: {{ compute_az }}
+      runner:
+        constant:
+          times: 2
+          concurrency: 2
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+        network:
+          network_create_args: {{ network_create_args | tojson }}
+          router:
+            external_gateway_info:
+              network_id: {{ floating_network | tojson }}
+{%- endfor %}
+{%- endif %}
+    -
+      title: NovaServers.list_servers tests
+      scenario:
+        NovaServers.list_servers:
+          detailed: true
+      runner:
+        constant:
+          times: 4
+          concurrency: 2
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+        servers@ultimum:
+          flavor: {{ flavor }}
+          image: {{ image }}
+          servers_per_tenant: 2
+          auto_assign_nic: true
+          availability_zone: {{ compute_az }}
+        network:
+          networks_per_tenant: 1
+          network_create_args: {{ network_create_args | tojson }}
+{%- for action in ("boot_and_show_server", "boot_and_get_console_output") %}
+    -
+      title: NovaServers.{{ action }} tests
+      scenario:
+        NovaServers.{{ action }}:
+          flavor: {{ flavor }}
+          image: {{ image }}
+          availability_zone: {{ compute_az }}
+      runner:
+        constant:
+          times: 2
+          concurrency: 2
+      contexts:
+        network: {{ network }}
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+{%- endfor %}
+    -
+      title: NovaServers.boot_and_get_console_url tests
+      scenario:
+        NovaServers.boot_and_get_console_url:
+          flavor: {{ flavor }}
+          image: {{ image }}
+          console_type: novnc
+          availability_zone: {{ compute_az }}
+      runner:
+        constant:
+          times: 4
+          concurrency: 2
+      contexts:
+        network: {{ network }}
+        users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+{%- for scenario_name in ("resize_server", "resize_shutoff_server") %}
+    -
+      title: NovaServers.{{ scenario_name }} tests
+      workloads:
+{%- for confirm in ("true", "false") %}
+        -
+          scenario:
+            NovaServers.{{ scenario_name }}:
+              flavor: {{ flavor }}
+              image: {{ image }}
+              to_flavor: {{ resize_flavor }}
+              confirm: {{ confirm }}
+              availability_zone: {{ compute_az }}
+          runner:
+            constant:
+              times: 2
+              concurrency: 2
+          contexts:
+            network: {{ network }}
+            users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+{%- endfor %}
+{%- endfor %}
+    -
+      title: NovaServers.boot_server_attach_created_volume_and_resize tests
+      scenario:
+        NovaServers.boot_server_attach_created_volume_and_resize:
+          flavor: {{ flavor }}
+          image: {{ image }}
+          to_flavor: {{ resize_flavor }}
+          volume_size: 1
+          confirm: true
+          force_delete: false
+          do_delete: true
+          boot_server_kwargs: {{ zonal_server }}
+          create_volume_kwargs: {{ zonal_volume }}
+      runner:
+        constant:
+          times: 2
+          concurrency: 2
+      contexts:
+        network: {{ network }}
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+    -
+      title: NovaServers.boot_server_attach_created_volume_and_extend tests
+      scenario:
+        NovaServers.boot_server_attach_created_volume_and_extend:
+          flavor: {{ flavor }}
+          image: {{ image }}
+          volume_size: 1
+          new_volume_size: 2
+          force_delete: false
+          do_delete: true
+          boot_server_kwargs: {{ zonal_server }}
+          create_volume_kwargs: {{ zonal_volume }}
+      runner:
+        constant:
+          times: 2
+          concurrency: 2
+      contexts:
+        network: {{ network }}
+        api_versions:
+          cinder:
+            version: 3.42
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+    -
+      title: NovaServers.boot_server_from_volume_and_resize tests
+      scenario:
+        NovaServers.boot_server_from_volume_and_resize:
+          flavor: {{ flavor }}
+          image: {{ image }}
+          to_flavor: {{ resize_flavor }}
+          volume_size: 1
+          confirm: true
+          force_delete: false
+          do_delete: true
+          boot_server_kwargs: {{ zonal_server }}
+          create_volume_kwargs: {{ zonal_volume }}
+      runner:
+        constant:
+          times: 2
+          concurrency: 2
+      contexts:
+        network: {{ network }}
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+      sla:
+        failure_rate:
+          max: 50
+    -
+      title: NovaServers.boot_and_bounce_server tests
+      scenario:
+        NovaServers.boot_and_bounce_server:
+          flavor: {{ flavor }}
+          image: {{ image }}
+          availability_zone: {{ compute_az }}
+          actions:
+            - hard_reboot: 1
+            - stop_start: 1
+            - rescue_unrescue: 1
+            - pause_unpause: 1
+            - suspend_resume: 1
+            - lock_unlock: 1
+            - shelve_unshelve: 1
+      runner:
+        constant:
+          times: 2
+          concurrency: 2
+      contexts:
+        network: {{ network }}
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+    -
+      title: NovaServers.boot_lock_unlock_and_delete tests
+      scenario:
+        NovaServers.boot_lock_unlock_and_delete:
+          flavor: {{ flavor }}
+          image: {{ image }}
+          availability_zone: {{ compute_az }}
+      runner:
+        constant:
+          times: 2
+          concurrency: 2
+      contexts:
+        network: {{ network }}
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+{%- for scenario_name in ("boot_server_from_volume_and_delete", "boot_server_from_volume") %}
+    -
+      title: NovaServers.{{ scenario_name }} tests
+      scenario:
+        NovaServers.{{ scenario_name }}:
+          flavor: {{ flavor }}
+          image: {{ image }}
+          volume_size: 1
+          volume_type: {{ volume_type | tojson }}
+          boot_server_kwargs: {{ zonal_server }}
+          create_volume_kwargs:
+            availability_zone: {{ volume_availability_zone | tojson }}
+      runner:
+        constant:
+          times: 2
+          concurrency: 2
+      contexts:
+        network: {{ network }}
+        users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+{%- endfor %}
+    -
+      title: NovaServers.snapshot_server tests
+      workloads:
+        -
+          scenario:
+            NovaServers.snapshot_server:
+              flavor: {{ flavor }}
+              image: {{ image }}
+              availability_zone: {{ compute_az }}
+          runner:
+            constant:
+              times: 2
+              concurrency: 2
+          contexts:
+            network: {{ network }}
+            users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+        -
+          scenario:
+            NovaServers.snapshot_server:
+              flavor: {{ flavor }}
+              image: {{ image }}
+              availability_zone: {{ compute_az }}
+          runner:
+            constant:
+              times: 2
+              concurrency: 2
+          contexts:
+            network: {{ network }}
+            users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+            api_versions:
+              glance:
+                version: 2
+    -
+      title: NovaServers.boot_server tests
+      workloads:
+        -
+          scenario:
+            NovaServers.boot_server:
+              flavor:
+                name: "^ram64$"
+              image: {{ image }}
+              auto_assign_nic: true
+              availability_zone: {{ compute_az }}
+          runner:
+            constant:
+              times: 2
+              concurrency: 2
+          contexts:
+            network: {{ network }}
+            users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+            flavors:
+              -
+                name: "ram64"
+                ram: 64
+                disk: 1
+        -
+          scenario:
+            NovaServers.boot_server:
+              flavor: {{ flavor }}
+              image: {{ image }}
+              availability_zone: {{ compute_az }}
+          runner:
+            constant:
+              times: 2
+              concurrency: 2
+          contexts:
+            network: {{ network }}
+            users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+    -
+      title: NovaHypervisors.list_hypervisors tests
+      scenario:
+        NovaHypervisors.list_hypervisors:
+          detailed: true
+      runner:
+        constant:
+          times: 4
+          concurrency: 2
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+    -
+      title: NovaHypervisors.statistics_hypervisors tests
+      scenario:
+        NovaHypervisors.statistics_hypervisors: {}
+      runner:
+        constant:
+          times: 5
+          concurrency: 2
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+{%- for scenario_name in ("list_and_get_hypervisors", "list_and_get_uptime_hypervisors", "list_and_search_hypervisors") %}
+    -
+      title: NovaHypervisors.{{ scenario_name }} tests
+      scenario:
+        NovaHypervisors.{{ scenario_name }}:
+          detailed: true
+      runner:
+        constant:
+          times: 4
+          concurrency: 2
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+{%- endfor %}
+    -
+      title: NovaKeypair.create_and_delete_keypair tests
+      workloads:
+        -
+          scenario:
+            NovaKeypair.create_and_delete_keypair: {}
+          runner:
+            constant:
+              times: 4
+              concurrency: 4
+          contexts:
+            users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+        -
+          scenario:
+            NovaKeypair.create_and_delete_keypair:
+              key_type: "x509"
+          runner:
+            constant:
+              times: 4
+              concurrency: 4
+          contexts:
+            users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+            api_versions:
+              nova:
+                version: 2.2
+    -
+      title: NovaKeypair.create_and_list_keypairs tests
+      scenario:
+        NovaKeypair.create_and_list_keypairs: {}
+      runner:
+        constant:
+          times: 4
+          concurrency: 4
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+    -
+      title: NovaKeypair.create_and_get_keypair tests
+      scenario:
+        NovaKeypair.create_and_get_keypair: {}
+      runner:
+        constant:
+          times: 4
+          concurrency: 4
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+    -
+      title: NovaKeypair.create_and_get_keypair tests
+      workloads:
+        -
+          scenario:
+            NovaKeypair.boot_and_delete_server_with_keypair:
+              flavor: {{ flavor }}
+              image: {{ image }}
+              boot_server_kwargs: {{ zonal_server }}
+          runner:
+            constant:
+              times: 2
+              concurrency: 2
+          contexts:
+            users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+            network:
+              start_cidr: "10.2.0.0/24"
+              network_create_args: {{ network_create_args | tojson }}
+        -
+          scenario:
+            NovaKeypair.boot_and_delete_server_with_keypair:
+              flavor: {{ flavor }}
+              image: {{ image }}
+              key_type: "x509"
+              boot_server_kwargs: {{ zonal_server }}
+          runner:
+            constant:
+              times: 2
+              concurrency: 2
+          contexts:
+            users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+            network:
+              start_cidr: "10.2.0.0/24"
+              network_create_args: {{ network_create_args | tojson }}
+            api_versions:
+              nova:
+                version: 2.2
+    -
+      title: NovaServers.boot_and_delete_multiple_servers tests
+      scenario:
+        NovaServers.boot_and_delete_multiple_servers:
+          flavor: {{ flavor }}
+          image: {{ image }}
+          count: 5
+          auto_assign_nic: true
+          availability_zone: {{ compute_az }}
+      runner:
+        constant:
+          times: 2
+          concurrency: 2
+      contexts:
+        network: {{ network }}
+        users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+    -
+      title: NovaFlavors.list_flavors tests
+      scenario:
+        NovaFlavors.list_flavors:
+          detailed: true
+      runner:
+        constant:
+          times: 4
+          concurrency: 2
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+    -
+      title: NovaAggregates.list_aggregates tests
+      scenario:
+        NovaAggregates.list_aggregates: {}
+      runner:
+        constant:
+          times: 4
+          concurrency: 2
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+    -
+      title: NovaAggregates.create_aggregate_add_and_remove_host tests
+      scenario:
+        UltimumNovaAggregates.create_aggregate_add_and_remove_host:
+          availability_zone: {{ compute_az }}
+      runner:
+        constant:
+          times: 4
+          concurrency: 1
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+    -
+      title: NovaAvailabilityZones.list_availability_zones tests
+      scenario:
+        NovaAvailabilityZones.list_availability_zones:
+          detailed: true
+      runner:
+        constant:
+          concurrency: 2
+          times: 4
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+    -
+      title: NovaServices.list_services tests
+      scenario:
+        NovaServices.list_services: {}
+      runner:
+        constant:
+          times: 4
+          concurrency: 2
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+    -
+      title: NovaFlavors.create_flavor tests
+      scenario:
+        NovaFlavors.create_flavor:
+          ram: 500
+          vcpus: 1
+          disk: 1
+      runner:
+        constant:
+          times: 4
+          concurrency: 2
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+    -
+      title: NovaFlavors.create_flavor_and_set_keys tests
+      scenario:
+        NovaFlavors.create_flavor_and_set_keys:
+          ram: 500
+          vcpus: 1
+          disk: 1
+          extra_specs:
+            quota:disk_read_bytes_sec: 10240
+      runner:
+        constant:
+          concurrency: 2
+          times: 4
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+{%- for scenario_name in ("create_and_get_flavor", "create_and_delete_flavor", "create_and_list_flavor_access") %}
+    -
+      title: NovaFlavors.{{ scenario_name }} tests
+      scenario:
+        NovaFlavors.{{ scenario_name }}:
+          ram: 500
+          vcpus: 1
+          disk: 1
+      runner:
+        constant:
+          times: 4
+          concurrency: 2
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+{%- endfor %}
+    -
+      title: NovaFlavors.create_flavor_and_add_tenant_access tests
+      scenario:
+        NovaFlavors.create_flavor_and_add_tenant_access:
+          ram: 500
+          vcpus: 1
+          disk: 1
+      runner:
+        constant:
+          concurrency: 2
+          times: 4
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+    -
+      title: NovaServers.boot_and_update_server tests
+      scenario:
+        NovaServers.boot_and_update_server:
+          flavor: {{ flavor }}
+          image: {{ image }}
+          availability_zone: {{ compute_az }}
+      runner:
+        constant:
+          times: 4
+          concurrency: 2
+      contexts:
+        network: {{ network }}
+        users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+    -
+      title: NovaServers.boot_server_from_volume_snapshot tests
+      scenario:
+        NovaServers.boot_server_from_volume_snapshot:
+          flavor: {{ flavor }}
+          image: {{ image }}
+          volume_size: 1
+          volume_type: {{ volume_type | tojson }}
+          boot_server_kwargs: {{ zonal_server }}
+          create_volume_kwargs:
+            availability_zone: {{ volume_availability_zone | tojson }}
+      runner:
+        constant:
+          times: 2
+          concurrency: 2
+      contexts:
+        network: {{ network }}
+        users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+{%- for scenario_name in ("create_and_list_aggregates", "create_and_delete_aggregate", "create_and_update_aggregate", "create_and_get_aggregate_details") %}
+    -
+      title: NovaAggregates.{{ scenario_name }} tests
+      scenario:
+        NovaAggregates.{{ scenario_name }}:
+          availability_zone: {{ compute_az }}
+      runner:
+        constant:
+          times: 4
+          concurrency: 2
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+{%- endfor %}
+    -
+      title: NovaServers.boot_server_and_attach_interface tests
+      scenario:
+        NovaServers.boot_server_and_attach_interface:
+          flavor: {{ flavor }}
+          image: {{ image }}
+          network_create_args: {{ network_create_args | tojson }}
+          subnet_create_args: {}
+          subnet_cidr_start: "1.1.0.0/30"
+          boot_server_args:
+            auto_assign_nic: true
+            availability_zone: {{ compute_az }}
+      runner:
+        constant:
+          times: 2
+          concurrency: 2
+      contexts:
+        network:
+          network_create_args: {{ network_create_args | tojson }}
+        users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+    -
+      title: NovaAggregates.create_aggregate_add_host_and_boot_server tests
+      scenario:
+        UltimumNovaAggregates.create_aggregate_add_host_and_boot_server:
+          image: {{ image }}
+          metadata:
+            ultimum_rally_az: "true"
+          availability_zone: {{ compute_az }}
+          ram: 512
+          vcpus: 1
+          disk: 1
+      runner:
+        constant:
+          times: 1
+          concurrency: 1
+      contexts:
+        network: {{ network }}
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+    -
+      title: NovaServers.boot_server_and_list_interfaces tests
+      scenario:
+        NovaServers.boot_server_and_list_interfaces:
+          flavor: {{ flavor }}
+          image: {{ image }}
+          availability_zone: {{ compute_az }}
+      runner:
+        constant:
+          times: 3
+          concurrency: 3
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+        network:
+          start_cidr: "100.1.0.0/26"
+          network_create_args: {{ network_create_args | tojson }}
+    -
+      title: NovaServers.boot_server_attach_volume_and_list_attachments tests
+      scenario:
+        NovaServers.boot_server_attach_volume_and_list_attachments:
+          flavor: {{ flavor }}
+          image: {{ image }}
+          volume_size: 1
+          volume_num: 2
+          boot_server_kwargs: {{ zonal_server }}
+          create_volume_kwargs: {{ zonal_volume }}
+      runner:
+        constant:
+          times: 2
+          concurrency: 2
+      contexts:
+        network: {{ network }}
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}

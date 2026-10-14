@@ -1,0 +1,144 @@
+    -
+      title: BarbicanSecrets.create_and_delete
+      scenario:
+        BarbicanSecrets.create_and_delete: {}
+      runner:
+        constant:
+          times: 2
+          concurrency: 1
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+    -
+      title: BarbicanSecrets.get
+      scenario:
+        BarbicanSecrets.get: {}
+      runner:
+        constant:
+          times: 2
+          concurrency: 1
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+    -
+      title: BarbicanSecrets.create_and_list
+      scenario:
+        BarbicanSecrets.create_and_list: {}
+      runner:
+        constant:
+          times: 2
+          concurrency: 1
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+    -
+      title: BarbicanSecrets.create
+      scenario:
+        BarbicanSecrets.create: {}
+      runner:
+        constant:
+          times: 2
+          concurrency: 1
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+    -
+      title: BarbicanSecrets.list
+      scenario:
+        BarbicanSecrets.list: {}
+      runner:
+        constant:
+          times: 2
+          concurrency: 1
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+    -
+      title: BarbicanContainers.list
+      scenario:
+        BarbicanContainers.list: {}
+      runner:
+        constant:
+          times: 2
+          concurrency: 1
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+    -
+      title: BarbicanContainers.create_and_delete
+      scenario:
+        BarbicanContainers.create_and_delete: {}
+      runner:
+        constant:
+          times: 2
+          concurrency: 1
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+    -
+      title: BarbicanContainers.create_certificate_and_delete
+      scenario:
+        BarbicanContainers.create_certificate_and_delete: {}
+      runner:
+        constant:
+          times: 2
+          concurrency: 1
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+    -
+      title: BarbicanContainers.create_rsa_and_delete
+      scenario:
+        BarbicanContainers.create_rsa_and_delete: {}
+      runner:
+        constant:
+          times: 2
+          concurrency: 1
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+    -
+      title: BarbicanSecrets.create_symmetric_and_delete
+      scenario:
+        BarbicanSecrets.create_symmetric_and_delete:
+          payload: "rally_data"
+          algorithm: "aes"
+          bit_length: 256
+          mode: "cbc"
+      runner:
+        constant:
+          times: 2
+          concurrency: 1
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+    -
+      title: BarbicanOrders.create_asymmetric_and_delete
+      scenario:
+        BarbicanOrders.create_asymmetric_and_delete: {}
+      runner:
+        constant:
+          times: 4
+          concurrency: 2
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+    -
+      title: BarbicanOrders.create_key_and_delete
+      scenario:
+        BarbicanOrders.create_key_and_delete: {}
+      runner:
+        constant:
+          times: 4
+          concurrency: 2
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+    -
+      title: BarbicanOrders.create_certificate_and_delete
+      scenario:
+        BarbicanOrders.create_certificate_and_delete: {}
+      runner:
+        constant:
+          times: 4
+          concurrency: 2
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+    -
+      title: BarbicanOrders.list
+      scenario:
+        BarbicanOrders.list: {}
+      runner:
+        constant:
+          times: 4
+          concurrency: 2
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}

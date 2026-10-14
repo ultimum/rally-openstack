@@ -1,0 +1,46 @@
+heat_template_version: 2016-10-14
+
+description: >
+  A resource group of servers with attached volumes. Each member is the
+  Ultimum::ServerWithVolume template, which the task maps to
+  server_with_volume.yaml through the stack environment.
+
+parameters:
+  num_instances:
+    type: number
+    description: number of instances that should be created in resource group
+    constraints:
+      - range: { min: 1 }
+  image:
+    type: string
+  flavor:
+    type: string
+  availability_zone:
+    type: string
+    default: ""
+  volume_availability_zone:
+    type: string
+    default: ""
+  volume_type:
+    type: string
+    default: ""
+  volume_size:
+    type: number
+    default: 1
+    constraints:
+      - range: { min: 1, max: 1024 }
+
+resources:
+  group_of_volumes:
+    type: OS::Heat::ResourceGroup
+    properties:
+      count: { get_param: num_instances }
+      resource_def:
+        type: Ultimum::ServerWithVolume
+        properties:
+          image: { get_param: image }
+          flavor: { get_param: flavor }
+          availability_zone: { get_param: availability_zone }
+          volume_availability_zone: { get_param: volume_availability_zone }
+          volume_type: { get_param: volume_type }
+          volume_size: { get_param: volume_size }

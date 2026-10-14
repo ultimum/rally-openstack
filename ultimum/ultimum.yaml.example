@@ -59,6 +59,16 @@ identity:
     update_existing_password: false
     roles: [member]
 
+az_validation:
+  # Project used by ultimum-rally-az-verification for every workload.
+  # It must exist; Rally never creates or deletes it. Each workload creates
+  # the temporary users it needs in this project (role "member") and deletes
+  # them afterwards. Admin-only APIs still use admin.openrc.
+  # null = identity.project.name / identity.project.domain.
+  project:
+    name: null
+    domain: null
+
 rally:
   # Separate deployment with one predefined user/project.
   # Selected explicitly; leaves the active deployment for other commands intact.

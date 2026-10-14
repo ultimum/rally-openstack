@@ -1,0 +1,169 @@
+{% set heat_image_name = "ultimum-az-heat-image" %}
+{% set heat_image = {"image_url": heat_image_location, "disk_format": "qcow2", "container_format": "bare", "images_per_tenant": 1, "image_name": heat_image_name} | tojson %}
+{% set zonal_server = {"image": heat_image_name, "flavor": flavor_name, "availability_zone": availability_zone or ""} %}
+{% set zonal_volume_server = dict(zonal_server, volume_availability_zone=volume_availability_zone or "", volume_type=volume_type or "") %}
+    -
+      title: HeatStacks.create_and_list_stack tests
+      scenario:
+        HeatStacks.create_and_list_stack:
+          template_path: {{ (heat_template_dir ~ "/default.yaml") | tojson }}
+      runner:
+        constant:
+          times: 6
+          concurrency: 3
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+    -
+      title: HeatStacks.create_and_delete_stack tests
+      workloads:
+        -
+          scenario:
+            HeatStacks.create_and_delete_stack:
+              template_path: {{ (heat_template_dir ~ "/default.yaml") | tojson }}
+          runner:
+            constant:
+              times: 6
+              concurrency: 3
+          contexts:
+            users: {{ dict(project_users, users_per_tenant=3) | tojson }}
+        -
+          scenario:
+            HeatStacks.create_and_delete_stack:
+              template_path: {{ (heat_template_dir ~ "/server_with_volume.yaml") | tojson }}
+              parameters: {{ zonal_volume_server | tojson }}
+          runner:
+            constant:
+              times: 2
+              concurrency: 2
+          contexts:
+            users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+            images: {{ heat_image }}
+        -
+          scenario:
+            HeatStacks.create_and_delete_stack:
+              template_path: {{ (heat_template_dir ~ "/resource_group_server_with_volume.yaml") | tojson }}
+              parameters: {{ dict(zonal_volume_server, num_instances=2) | tojson }}
+              files: [{{ (heat_template_dir ~ "/server_with_volume.yaml") | tojson }}]
+              environment:
+                resource_registry:
+                  "Ultimum::ServerWithVolume": {{ (heat_template_dir ~ "/server_with_volume.yaml") | tojson }}
+          runner:
+            constant:
+              times: 2
+              concurrency: 2
+          contexts:
+            users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+            images: {{ heat_image }}
+        -
+          scenario:
+            HeatStacks.create_and_delete_stack:
+              template_path: {{ (heat_template_dir ~ "/resource_group_with_constraint.yaml") | tojson }}
+          runner:
+            constant:
+              times: 6
+              concurrency: 3
+          contexts:
+            users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+    -
+      title: HeatStacks.create_check_delete_stack tests
+      scenario:
+        HeatStacks.create_check_delete_stack:
+          template_path: {{ (heat_template_dir ~ "/random_strings.yaml") | tojson }}
+      runner:
+        constant:
+          times: 6
+          concurrency: 3
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+    -
+      title: HeatStacks.create_update_delete_stack tests
+      workloads:
+{%- for template, updated, users_per_tenant in (
+      ("random_strings", "updated_random_strings_add", 2),
+      ("random_strings", "updated_random_strings_delete", 2),
+      ("random_strings", "updated_random_strings_replace", 2),
+      ("autoscaling_policy", "updated_autoscaling_policy_inplace", 2),
+      ("resource_group", "updated_resource_group_increase", 3),
+      ("resource_group", "updated_resource_group_reduce", 3)) %}
+        -
+          scenario:
+            HeatStacks.create_update_delete_stack:
+              template_path: {{ (heat_template_dir ~ "/" ~ template ~ ".yaml") | tojson }}
+              updated_template_path: {{ (heat_template_dir ~ "/" ~ updated ~ ".yaml") | tojson }}
+          runner:
+            constant:
+              times: 6
+              concurrency: 3
+          contexts:
+            users: {{ dict(project_users, users_per_tenant=users_per_tenant) | tojson }}
+{%- endfor %}
+{%- for scenario_name in ("create_suspend_resume_delete_stack", "create_snapshot_restore_delete_stack") %}
+    -
+      title: HeatStacks.{{ scenario_name }} tests
+      scenario:
+        HeatStacks.{{ scenario_name }}:
+          template_path: {{ (heat_template_dir ~ "/random_strings.yaml") | tojson }}
+      runner:
+        constant:
+          times: 6
+          concurrency: 3
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=3) | tojson }}
+{%- endfor %}
+    -
+      title: HeatStacks.create_stack_and_scale tests
+      workloads:
+{%- for delta, concurrency in ((1, 1), (-1, 2)) %}
+        -
+          scenario:
+            HeatStacks.create_stack_and_scale:
+              template_path: {{ (heat_template_dir ~ "/autoscaling_group.yaml") | tojson }}
+              output_key: "scaling_url"
+              delta: {{ delta }}
+              parameters: {{ dict(zonal_server, scaling_adjustment=delta) | tojson }}
+          runner:
+            constant:
+              times: 2
+              concurrency: {{ concurrency }}
+          contexts:
+            users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+            images: {{ heat_image }}
+{%- endfor %}
+{%- for scenario_name in ("create_stack_and_list_output", "create_stack_and_list_output_via_API") %}
+    -
+      title: HeatStacks.{{ scenario_name }} tests
+      scenario:
+        HeatStacks.{{ scenario_name }}:
+          template_path: {{ (heat_template_dir ~ "/resource_group_with_outputs.yaml") | tojson }}
+      runner:
+        constant:
+          times: 4
+          concurrency: 2
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+{%- endfor %}
+{%- for scenario_name in ("create_stack_and_show_output", "create_stack_and_show_output_via_API") %}
+    -
+      title: HeatStacks.{{ scenario_name }} tests
+      scenario:
+        HeatStacks.{{ scenario_name }}:
+          template_path: {{ (heat_template_dir ~ "/resource_group_with_outputs.yaml") | tojson }}
+          output_key: "val1"
+      runner:
+        constant:
+          times: 4
+          concurrency: 2
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+{%- endfor %}
+    -
+      title: Authenticate.validate_heat tests
+      scenario:
+        Authenticate.validate_heat:
+          repetitions: 2
+      runner:
+        constant:
+          times: 10
+          concurrency: 5
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=5) | tojson }}

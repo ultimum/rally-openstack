@@ -1,0 +1,46 @@
+{% set lb_az = octavia_availability_zone | tojson %}
+{%- for title, scenario_name in (
+      ("create_and_list_loadbalancers", "create_and_list_loadbalancers"),
+      ("create_and_delete_loadbalancers", "create_and_delete_loadbalancers"),
+      ("create_and_update_loadbalanacers", "create_and_update_loadbalancers"),
+      ("create_and_stats_loadbalanacers", "create_and_stats_loadbalancers"),
+      ("create_and_show_loadbalanacers", "create_and_show_loadbalancers")) %}
+    -
+      title: Octavia.{{ title }}
+      scenario:
+        UltimumOctavia.{{ scenario_name }}:
+          availability_zone: {{ lb_az }}
+      runner:
+        constant:
+          times: 2
+          concurrency: 2
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+        roles: ["load-balancer_member"]
+        network:
+          network_create_args: {{ network_create_args | tojson }}
+      sla:
+        failure_rate:
+          max: 0
+{%- endfor %}
+{%- for scenario_name in ("create_and_list_pools", "create_and_delete_pools", "create_and_update_pools", "create_and_show_pools") %}
+    -
+      title: Octavia.{{ scenario_name }}
+      scenario:
+        UltimumOctavia.{{ scenario_name }}:
+          protocol: "HTTP"
+          lb_algorithm: "ROUND_ROBIN"
+          availability_zone: {{ lb_az }}
+      runner:
+        constant:
+          times: 2
+          concurrency: 2
+      contexts:
+        users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+        roles: ["load-balancer_member"]
+        network:
+          network_create_args: {{ network_create_args | tojson }}
+      sla:
+        failure_rate:
+          max: 0
+{%- endfor %}
