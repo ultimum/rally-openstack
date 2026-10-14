@@ -88,7 +88,7 @@ ok "Required commands available"
 
 info "Checking AZ and project plugins"
 
-PLUGINS="availability_zone.py project_users.py boot_from_volume.py connect_retries.py"
+PLUGINS="availability_zone.py project_users.py boot_from_volume.py connect_retries.py heat_signal.py"
 LOCAL_PLUGIN_DIR="$(dirname "$(readlink -f "$0")")/plugins"
 
 if [ -z "${RALLY_AZ_PLUGIN_DIR:-}" ] && [ ! -d "${PLUGIN_DIR}" ] \

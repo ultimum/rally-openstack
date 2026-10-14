@@ -70,8 +70,9 @@ The wrapper starts the task once (``rally task start`` validates it before
 running any workload, so there is no separate ``rally task validate``), passing
 ``--plugin-paths`` with ``ultimum/plugins/availability_zone.py``,
 ``ultimum/plugins/project_users.py``,
-``ultimum/plugins/boot_from_volume.py`` and
-``ultimum/plugins/connect_retries.py``, and returns
+``ultimum/plugins/boot_from_volume.py``,
+``ultimum/plugins/connect_retries.py`` and
+``ultimum/plugins/heat_signal.py``, and returns
 the exit code of ``rally task start``. It prints the commands for inspecting
 the task and generating its HTML report.
 
@@ -87,6 +88,18 @@ through: before each boot it creates a volume from the image with
 ``delete_on_termination``. Workloads that bring their own block device
 mapping (``boot_server_from_volume*``) are unchanged. Heat stacks boot from
 volumes created by their templates (``heat/boot_server.yaml``).
+
+Heat scaling without EC2
+========================
+
+``HeatStacks.create_stack_and_scale`` scales the stack by signalling its
+scaling policy. Upstream it POSTs to the policy's ``alarm_url``, a URL
+pre-signed with EC2 credentials that heat-api-cfn validates against Keystone
+``/v3/ec2tokens``. Ultimum does not use EC2 credentials:
+``heat/autoscaling_group.yaml`` outputs the policy's ``signal_url`` (Heat
+API), and ``ultimum/plugins/heat_signal.py`` sends that signal through
+heatclient as the scenario user (Keystone token, Rally's Heat endpoint). No
+EC2 credentials are created and heat-api-cfn is not used.
 
 Exceptions and side effects:
 

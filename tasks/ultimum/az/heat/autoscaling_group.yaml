@@ -3,8 +3,9 @@ heat_template_version: 2016-10-14
 description: >
   An autoscaling group of servers booted from volumes (Ultimum::BootServer,
   mapped to boot_server.yaml by the stack environment) in the requested
-  availability zones and a scaling policy whose signal URL is the
-  scaling_url output.
+  availability zones and a scaling policy whose Heat API signal URL is the
+  scaling_url output (signal_url: needs a Keystone token, no EC2
+  credentials; the heat_signal.py plugin sends it).
 
 parameters:
   flavor:
@@ -62,4 +63,4 @@ resources:
 
 outputs:
   scaling_url:
-    value: { get_attr: [scaling_policy, alarm_url] }
+    value: { get_attr: [scaling_policy, signal_url] }
