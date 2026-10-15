@@ -2,6 +2,10 @@
 {% set volume_az = volume_availability_zone | tojson %}
 {% set vtype = volume_type | tojson %}
 {% set zonal_volume = {"availability_zone": volume_availability_zone, "volume_type": volume_type} | tojson %}
+{#- Workloads that boot servers get their own network: the project sees
+    several networks (its own and shared ones), and Nova refuses to choose
+    ("Multiple possible networks found"). #}
+{% set network = {"router": {}, "network_create_args": network_create_args} | tojson %}
     -
       title: CinderVolumes.create_volume tests
       workloads:
@@ -429,6 +433,7 @@
           concurrency: 2
       contexts:
         users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+        network: {{ network }}
     -
       title: CinderVolumes.create_snapshot_and_attach_volume tests
       scenario:
@@ -449,6 +454,7 @@
           concurrency: 2
       contexts:
         users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+        network: {{ network }}
     -
       title: CinderVolumes.create_and_delete_snapshot tests
       scenario:
@@ -585,6 +591,7 @@
           concurrency: 2
       contexts:
         users: {{ dict(project_users, users_per_tenant=1) | tojson }}
+        network: {{ network }}
       sla:
         failure_rate:
           max: 51

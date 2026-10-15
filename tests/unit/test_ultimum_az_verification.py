@@ -245,6 +245,22 @@ class UltimumAZTaskTestCase(unittest.TestCase):
         ):
             self.assertIn(title, titles)
 
+    def test_workloads_booting_servers_choose_their_network(self):
+        # The project sees several networks; without one chosen Nova
+        # refuses to boot ("Multiple possible networks found").
+        task = render_task(dict(self.ARGS, project_quota_tests=True))
+        for workload in workloads(task):
+            (name, args), = workload["scenario"].items()
+            contexts = workload.get("contexts", {})
+            boots = ({"image", "flavor"} <= set(args)
+                     or "servers" in contexts)
+            if not boots:
+                continue
+            with self.subTest(scenario=name):
+                self.assertTrue(
+                    "network" in contexts or "nics" in json.dumps(args),
+                    name)
+
     def test_every_workload_runs_in_the_configured_project(self):
         task = render_task(dict(self.ARGS, project_quota_tests=True))
         for workload in workloads(task):
