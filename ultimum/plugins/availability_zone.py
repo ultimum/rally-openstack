@@ -11,6 +11,8 @@ task enables them as ``volumes@ultimum`` and ``servers@ultimum`` and the
 import random
 import typing as t
 
+from keystoneauth1 import adapter
+
 from rally import plugins
 
 
@@ -231,6 +233,10 @@ class ZonalAggregateMixin:
 
     def _zone_host(self, availability_zone):
         """Return an enabled, up compute host of the availability zone."""
+        return self._zone_hypervisor(availability_zone).service["host"]
+
+    def _zone_hypervisor(self, availability_zone):
+        """Return an enabled, up hypervisor of the availability zone."""
         hypervisors = [
             h for h in self._list_hypervisors()
             if h.state == "up" and h.status == "enabled"]
@@ -250,7 +256,7 @@ class ZonalAggregateMixin:
             raise exceptions.RallyException(
                 "Could not find an available compute host in availability "
                 "zone '%s'" % availability_zone)
-        return hypervisors[0].service["host"]
+        return hypervisors[0]
 
 
 @validation.add("required_services", services=[consts.Service.NOVA])
@@ -301,12 +307,17 @@ class CreateAggregateAddHostAndBootServer(ZonalAggregateMixin,
         """Create an aggregate with a zone host and boot a server on it.
 
         The aggregate, its host and the server all use 'availability_zone'.
-        Unscoped metadata keys are set on the flavor with the
-        'aggregate_instance_extra_specs:' scope, so the scheduler needs
-        AggregateInstanceExtraSpecsFilter to place the server on the host.
+        The server is steered to the host without any scheduler filter
+        configuration: a custom trait is put on the host's resource
+        provider in Placement for the duration of the scenario, and the
+        flavor requires it ('trait:CUSTOM_...=required'), which Placement
+        always honours. Unscoped metadata keys are also set on the flavor
+        with the 'aggregate_instance_extra_specs:' scope, which only
+        AggregateInstanceExtraSpecsFilter uses (when enabled).
 
         :param image: The image ID to boot from
-        :param metadata: The metadata to be set as flavor extra specs
+        :param metadata: The aggregate metadata, also set as flavor
+                         extra specs
         :param availability_zone: The availability zone of the aggregate,
                                   its host and the server
         :param ram: Memory in MB for the flavor
@@ -322,21 +333,85 @@ class CreateAggregateAddHostAndBootServer(ZonalAggregateMixin,
                                           availability_zone)
 
         aggregate = self._create_aggregate(availability_zone)
-        host_name = self._zone_host(availability_zone)
+        hypervisor = self._zone_hypervisor(availability_zone)
+        host_name = hypervisor.service["host"]
         self._aggregate_set_metadata(aggregate, metadata)
         self._aggregate_add_host(aggregate, host_name)
         flavor = self._create_flavor(ram, vcpus, disk)
-        # Scoped keys are matched by AggregateInstanceExtraSpecsFilter and
-        # ignored by ComputeCapabilitiesFilter.
-        flavor.set_keys({
-            key if ":" in key else "aggregate_instance_extra_specs:" + key:
-            value for key, value in metadata.items()})
+        trait = "CUSTOM_ULTIMUM_RALLY_%s" % self.generate_random_name(
+        ).upper().replace("-", "_")
+        placement = Placement(self._admin_clients)
+        provider = placement.provider(hypervisor.hypervisor_hostname)
+        with atomic.ActionTimer(self, "placement.add_trait"):
+            placement.add_trait(provider, trait)
+        try:
+            extra_specs = {
+                key if ":" in key else "aggregate_instance_extra_specs:" + key:
+                value for key, value in metadata.items()}
+            extra_specs["trait:" + trait] = "required"
+            flavor.set_keys(extra_specs)
 
-        server = self._boot_server(image, flavor.id, **boot_server_kwargs)
-        server = self.admin_clients("nova").servers.get(server.id)
-        if getattr(server, "OS-EXT-SRV-ATTR:host") != host_name:
-            raise exceptions.RallyException("Instance host and aggregate "
-                                            "host are different")
+            server = self._boot_server(image, flavor.id, **boot_server_kwargs)
+            server = self.admin_clients("nova").servers.get(server.id)
+            if getattr(server, "OS-EXT-SRV-ATTR:host") != host_name:
+                raise exceptions.RallyException("Instance host and aggregate "
+                                                "host are different")
+        finally:
+            with atomic.ActionTimer(self, "placement.remove_trait"):
+                placement.remove_trait(provider, trait)
+
+
+class Placement:
+    """The few Placement API calls needed to steer a server to one host."""
+
+    VERSION = "placement 1.6"
+    ATTEMPTS = 5
+
+    def __init__(self, clients):
+        credential = clients.credential
+        self.api = adapter.Adapter(
+            session=clients.keystone.get_session()[0],
+            service_type="placement",
+            interface=credential.endpoint_type or "public",
+            region_name=credential.region_name,
+            default_microversion=self.VERSION.split()[1])
+
+    def provider(self, name):
+        providers = self.api.get(
+            "/resource_providers", params={"name": name}
+        ).json()["resource_providers"]
+        if not providers:
+            raise exceptions.RallyException(
+                "No Placement resource provider named '%s'" % name)
+        return providers[0]["uuid"]
+
+    def _update_traits(self, provider, change):
+        # Nova also writes the provider's traits; retry on its generation.
+        for attempt in range(self.ATTEMPTS):
+            current = self.api.get(
+                "/resource_providers/%s/traits" % provider).json()
+            traits = change(set(current["traits"]))
+            if traits == set(current["traits"]):
+                return
+            response = self.api.put(
+                "/resource_providers/%s/traits" % provider,
+                json={"traits": sorted(traits),
+                      "resource_provider_generation":
+                          current["resource_provider_generation"]},
+                raise_exc=False)
+            if response.status_code != 409:
+                response.raise_for_status()
+                return
+        raise exceptions.RallyException(
+            "Traits of resource provider %s kept changing" % provider)
+
+    def add_trait(self, provider, trait):
+        self.api.put("/traits/%s" % trait)
+        self._update_traits(provider, lambda traits: traits | {trait})
+
+    def remove_trait(self, provider, trait):
+        self._update_traits(provider, lambda traits: traits - {trait})
+        self.api.delete("/traits/%s" % trait, raise_exc=False)
 
 
 class ZonalOctavia(octavia.Octavia):

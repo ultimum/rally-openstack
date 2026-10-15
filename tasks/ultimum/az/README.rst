@@ -89,26 +89,13 @@ through: before each boot it creates a volume from the image with
 mapping (``boot_server_from_volume*``) are unchanged. Heat stacks boot from
 volumes created by their templates (``heat/boot_server.yaml``).
 
-Heat scaling without EC2
-========================
-
-``HeatStacks.create_stack_and_scale`` scales the stack by signalling its
-scaling policy. Upstream it POSTs to the policy's ``alarm_url``, a URL
-pre-signed with EC2 credentials that heat-api-cfn validates against Keystone
-``/v3/ec2tokens``. Ultimum does not use EC2 credentials:
-``heat/autoscaling_group.yaml`` outputs the policy's ``signal_url`` (Heat
-API), and ``ultimum/plugins/heat_scaling.py`` sends that signal through
-heatclient as the scenario user (Keystone token, Rally's Heat endpoint). No
-EC2 credentials are created and heat-api-cfn is not used. The scenario then
-waits for the number of servers to change; group members are
-``Ultimum::BootServer`` stacks, so the plugin counts servers one nesting level
-deeper than upstream (``nested_depth=2``).
-
 Exceptions and side effects:
 
 * ``boot_and_delete_multiple_servers`` boots several servers per request,
   which cannot share one volume; Nova creates their root volumes from the
-  image with Cinder's default type, in the zone Nova chooses.
+  image with ``volume_type`` (the workload uses compute API 2.67), in the
+  zone Nova chooses (the server's zone when ``[cinder] cross_az_attach`` is
+  false, otherwise Cinder's default zone).
 * Snapshots of volume-backed servers also snapshot the root volume in
   Cinder. When ``snapshot_server`` deletes its image, the plugin deletes
   those volume snapshots and the then unused root volume as well.
@@ -123,6 +110,21 @@ Exceptions and side effects:
   without an image fails on the compute host (the server just stays
   ACTIVE), so ``boot_from_volume.py`` passes the image its boot volume was
   created from as the rescue image.
+
+Heat scaling without EC2
+========================
+
+``HeatStacks.create_stack_and_scale`` scales the stack by signalling its
+scaling policy. Upstream it POSTs to the policy's ``alarm_url``, a URL
+pre-signed with EC2 credentials that heat-api-cfn validates against Keystone
+``/v3/ec2tokens``. Ultimum does not use EC2 credentials:
+``heat/autoscaling_group.yaml`` outputs the policy's ``signal_url`` (Heat
+API), and ``ultimum/plugins/heat_scaling.py`` sends that signal through
+heatclient as the scenario user (Keystone token, Rally's Heat endpoint). No
+EC2 credentials are created and heat-api-cfn is not used. The scenario then
+waits for the number of servers to change; group members are
+``Ultimum::BootServer`` stacks, so the plugin counts servers one nesting level
+deeper than upstream (``nested_depth=2``).
 
 Admin environment
 =================
@@ -272,7 +274,13 @@ same as in ``rally-jobs``:
 ``UltimumNovaAggregates.create_aggregate_add_and_remove_host`` /
 ``UltimumNovaAggregates.create_aggregate_add_host_and_boot_server``
     Create the aggregate in the AZ and use an enabled compute host of that
-    AZ. The boot variant requires ``AggregateInstanceExtraSpecsFilter``.
+    AZ. The boot variant needs no scheduler filter configuration: for the
+    duration of the scenario it puts a custom trait
+    (``CUSTOM_ULTIMUM_RALLY_...``) on the host's resource provider in
+    Placement and the flavor requires it (``trait:...=required``), so the
+    server lands on that host. The trait is removed afterwards; should a run
+    be killed, ``openstack resource provider trait list`` shows it and
+    ``openstack trait delete`` removes it once unset.
 
 ``UltimumOctavia.*``
     The nine Octavia scenarios with ``availability_zone`` and ``provider``

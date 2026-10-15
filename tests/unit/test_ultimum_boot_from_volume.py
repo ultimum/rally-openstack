@@ -153,6 +153,23 @@ class BootFromVolumeTestCase(test.TestCase):
             self.boot_many.call_args_list)
 
     def test_multi_instance_request_lets_nova_create_volumes(self):
+        nova = self.scenario.clients.return_value
+        nova.api_version = self.module.api_versions.APIVersion("2.67")
+        with self.enabled():
+            self.module._boot_servers(self.scenario, "image-id", "flavor", 1,
+                                      instances_amount=5)
+        self.boot_many.assert_called_once_with(
+            self.scenario, None, "flavor", 1, 5, False,
+            block_device_mapping_v2=[{
+                "uuid": "image-id", "source_type": "image",
+                "destination_type": "volume", "boot_index": 0,
+                "volume_size": 2, "delete_on_termination": True,
+                "volume_type": "cz03_slow"}])
+        self.assertFalse(self.cinder.create_volume.called)
+
+    def test_multi_instance_volume_type_needs_compute_api_2_67(self):
+        nova = self.scenario.clients.return_value
+        nova.api_version = self.module.api_versions.APIVersion("2.66")
         with self.enabled():
             self.module._boot_servers(self.scenario, "image-id", "flavor", 1,
                                       instances_amount=5)

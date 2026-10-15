@@ -644,6 +644,10 @@
       contexts:
         network: {{ network }}
         users: {{ dict(project_users, users_per_tenant=2) | tojson }}
+        # 2.67: Nova creates the root volumes with the configured volume type.
+        api_versions:
+          nova:
+            version: 2.67
     -
       title: NovaFlavors.list_flavors tests
       scenario:

@@ -13,8 +13,11 @@ environment of the Rally process:
   type and availability zone, then boot from it with
   ``delete_on_termination``, so the volume goes away with the server.
 * Multi-instance requests (``min_count`` > 1) cannot share one volume; Nova
-  creates their root volumes from the image (``source_type: image``), with
-  Cinder's default type and the availability zone Nova chooses.
+  creates their root volumes from the image (``source_type: image``) with
+  the configured volume type, which needs compute API 2.67 (with an older
+  one Cinder's default type is used). Their availability zone is the one
+  Nova chooses: the server's zone when ``[cinder] cross_az_attach`` is
+  false, otherwise Cinder's default zone.
 * Requests that already carry a block device mapping (the
   ``boot_server_from_volume*`` scenarios) and images that are snapshots of
   volume-backed servers (they carry their own mapping) are left unchanged.
@@ -38,6 +41,8 @@ import json
 import math
 import os
 
+from novaclient import api_versions
+
 from rally import plugins
 
 
@@ -55,6 +60,7 @@ LOG = logging.getLogger(__name__)
 
 GIB = 1024 ** 3
 MAPPINGS = ("block_device_mapping", "block_device_mapping_v2")
+MAPPING_VOLUME_TYPE_VERSION = "2.67"
 
 upstream_boot_server = nova_utils.NovaScenario._boot_server
 upstream_boot_servers = nova_utils.NovaScenario._boot_servers
@@ -73,6 +79,16 @@ def settings():
         "availability_zone": os.environ.get("ULTIMUM_RALLY_BOOT_VOLUME_AZ")
         or None,
     }
+
+
+def mapping_volume_type_supported(scenario):
+    """Whether the compute API accepts volume_type in a mapping (2.67)."""
+    version = getattr(scenario.clients("nova"), "api_version", None)
+    try:
+        return version >= api_versions.APIVersion(
+            MAPPING_VOLUME_TYPE_VERSION)
+    except (TypeError, AttributeError):
+        return False
 
 
 def image_id_of(image):
@@ -157,6 +173,14 @@ def _boot_servers(self, image_id, flavor_id, requests, instances_amount=1,
                     "destination_type": "volume", "boot_index": 0,
                     "volume_size": volume_size(source, config["size"]),
                     "delete_on_termination": True}]
+        if config["volume_type"]:
+            if mapping_volume_type_supported(self):
+                mapping[0]["volume_type"] = config["volume_type"]
+            else:
+                LOG.warning("Compute API older than %s: Nova creates the "
+                            "root volumes of a multi-instance request with "
+                            "Cinder's default volume type"
+                            % MAPPING_VOLUME_TYPE_VERSION)
         return upstream_boot_servers(self, None, flavor_id, requests,
                                      instances_amount, auto_assign_nic,
                                      block_device_mapping_v2=mapping,
